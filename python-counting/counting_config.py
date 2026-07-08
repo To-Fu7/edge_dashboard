@@ -250,6 +250,45 @@ if not os.getenv('TRITON_MODEL'):
         f"TRITON_MODEL not set — derived '{TRITON_MODEL}' from legacy YOLO_MODEL={_legacy_model}"
     )
 
+# ADDITIONAL DETECTION (optional, run alongside person counting on the same frame)
+PEOPLE_COUNTING_TAG = os.getenv('PEOPLE_COUNTING_TAG', 'info')
+
+APD_ENABLED = os.getenv('APD_ENABLED', 'false').lower() == 'true'
+APD_MODEL = os.getenv('APD_MODEL', '')
+APD_CONFIDENCE = float(os.getenv('APD_CONFIDENCE', 0.3))
+APD_TAG = os.getenv('APD_TAG', 'alarm')
+if APD_ENABLED and not APD_MODEL:
+    logging.warning("APD_ENABLED=true but APD_MODEL is not set — APD detection will be disabled")
+    APD_ENABLED = False
+
+FIRE_SMOKE_ENABLED = os.getenv('FIRE_SMOKE_ENABLED', 'false').lower() == 'true'
+FIRE_SMOKE_MODEL = os.getenv('FIRE_SMOKE_MODEL', '')
+FIRE_SMOKE_CONFIDENCE = float(os.getenv('FIRE_SMOKE_CONFIDENCE', 0.3))
+FIRE_TAG = os.getenv('FIRE_TAG', 'alarm')
+SMOKE_TAG = os.getenv('SMOKE_TAG', 'alarm')
+FIRE_SMOKE_COOLDOWN_MINUTES = float(os.getenv('FIRE_SMOKE_COOLDOWN_MINUTES', 5))
+if FIRE_SMOKE_ENABLED and not FIRE_SMOKE_MODEL:
+    logging.warning("FIRE_SMOKE_ENABLED=true but FIRE_SMOKE_MODEL is not set — Fire/Smoke detection will be disabled")
+    FIRE_SMOKE_ENABLED = False
+
+FACE_ENABLED = os.getenv('FACE_ENABLED', 'false').lower() == 'true'
+FACE_MODEL = os.getenv('FACE_MODEL', '')  # YOLOv8-face detector, Triton model repo name
+FACE_EMBED_MODEL = os.getenv('FACE_EMBED_MODEL', '')  # ArcFace embedder, Triton model repo name
+FACE_CONFIDENCE = float(os.getenv('FACE_CONFIDENCE', 0.5))
+FACE_MATCH_THRESHOLD = float(os.getenv('FACE_MATCH_THRESHOLD', 0.5))  # min cosine similarity to call it a match
+FACE_CACHE_REFRESH_MINUTES = float(os.getenv('FACE_CACHE_REFRESH_MINUTES', 10))
+INSIDER_TAG = os.getenv('INSIDER_TAG', 'info')
+INTRUDER_TAG = os.getenv('INTRUDER_TAG', 'alarm')
+if FACE_ENABLED and not (FACE_MODEL and FACE_EMBED_MODEL):
+    logging.warning("FACE_ENABLED=true but FACE_MODEL/FACE_EMBED_MODEL not both set — Face detection will be disabled")
+    FACE_ENABLED = False
+
+# Per-type MQTT topics — each defaults to a subpath of the base MQTT_TOPIC but
+# is independently overridable (dashboard: Basic Settings → MQTT Topics).
+MQTT_APD_TOPIC = os.getenv('MQTT_APD_TOPIC', f"{MQTT_TOPIC}/apd")
+MQTT_FIRESMOKE_TOPIC = os.getenv('MQTT_FIRESMOKE_TOPIC', f"{MQTT_TOPIC}/firesmoke")
+MQTT_FACE_TOPIC = os.getenv('MQTT_FACE_TOPIC', f"{MQTT_TOPIC}/face")
+
 for _dep in ('YOLO_IMGSZ', 'ENABLE_NVDEC', 'YOLO_DEVICE'):
     if os.getenv(_dep):
         logging.warning(

@@ -56,7 +56,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { deviceCode, deviceName, activityTopic, intervalTopic, rtspUrl } = body;
+    const { deviceCode, deviceName, rtspUrl } = body;
 
     if (!deviceCode || !deviceName) {
       return NextResponse.json({ error: 'deviceCode and deviceName are required' }, { status: 400 });
@@ -86,8 +86,8 @@ export async function POST(request: Request) {
       MQTT_PORT: settings.mqtt.port,
       MQTT_USERNAME: settings.mqtt.username,
       MQTT_PASSWORD: settings.mqtt.password,
-      MQTT_TOPIC: activityTopic || '/person_in',
-      MQTT_INTERVAL_TOPIC: intervalTopic || '',
+      MQTT_TOPIC: settings.mqtt.activityTopicTemplate.replace(/\{code\}/g, deviceCode),
+      MQTT_INTERVAL_TOPIC: settings.mqtt.intervalTopicTemplate.replace(/\{code\}/g, deviceCode),
       MQTT_INTERVAL_MINUTES: settings.defaults.mqtt_interval_minutes,
       DAILY_SEND_TIME: settings.defaults.daily_send_time,
       RTSP_URL: rtspUrl || '',
@@ -99,6 +99,21 @@ export async function POST(request: Request) {
       JPEG_QUALITY: settings.defaults.jpeg_quality,
       FPS_LIMIT: settings.defaults.fps_limit,
       FRAME_SKIP: settings.defaults.frame_skip,
+      PEOPLE_COUNTING_TAG: settings.defaults.people_counting_tag,
+      APD_ENABLED: 'false',
+      APD_CONFIDENCE: settings.defaults.apd_confidence,
+      APD_TAG: settings.defaults.apd_tag,
+      FIRE_SMOKE_ENABLED: 'false',
+      FIRE_SMOKE_CONFIDENCE: settings.defaults.fire_smoke_confidence,
+      FIRE_TAG: settings.defaults.fire_tag,
+      SMOKE_TAG: settings.defaults.smoke_tag,
+      FIRE_SMOKE_COOLDOWN_MINUTES: settings.defaults.fire_smoke_cooldown_minutes,
+      FACE_ENABLED: 'false',
+      FACE_CONFIDENCE: settings.defaults.face_confidence,
+      FACE_MATCH_THRESHOLD: settings.defaults.face_match_threshold,
+      INSIDER_TAG: settings.defaults.insider_tag,
+      INTRUDER_TAG: settings.defaults.intruder_tag,
+      FACE_CACHE_REFRESH_MINUTES: settings.defaults.face_cache_refresh_minutes,
       POINT_AXIS: 'Y',
       MERGE_GATES: 'false',
       SWAP_IN_OUT: 'false',

@@ -27,14 +27,22 @@ import app_state as state
 import counting_config as cfg
 import lifecycle
 from counting import process_track
-from detection import apd, firesmoke
-from inference import TritonUnavailableError, TritonYoloClient
+from detection import apd, face, firesmoke
+from inference import TritonEmbedClient, TritonUnavailableError, TritonYoloClient
 from inference.model_metadata import load_model_classes
-from outputs import bbox_writer, db_worker, mjpeg_server, mqtt_out
+from outputs import bbox_writer, db_worker, face_db, mjpeg_server, mqtt_out
 from tracking import BYTETracker, BYTETrackerArgs, Detections
 
 TRITON_BACKOFF_MIN_S = 1.0
 TRITON_BACKOFF_MAX_S = 30.0
+
+# Fire/smoke alerts are cooldown-gated (minutes), so when nobody is watching the
+# stream there is no reason to run its inference every frame — sample instead.
+FIRESMOKE_INFER_INTERVAL_S = 1.0
+
+# apd_alerted_tracks / face_alerted_tracks gain one entry per track ever seen; prune when they grow.
+APD_ALERTED_TRACKS_MAX = 2000
+FACE_ALERTED_TRACKS_MAX = 2000
 
 _imshow_available = True  # opencv-headless has no GUI; disabled on first failure
 
@@ -194,7 +202,25 @@ def push_degraded_frame(frame, message):
             mjpeg_server.push_frame(jpeg.tobytes())
 
 
-def reset_tracking_state(tracker, apd_tracker=None):
+def reset_apd_state(apd_tracker):
+    """Tracker reset and dedup-state clear must always happen together —
+    a reset tracker reuses track ids, so stale dedup/unique-count entries
+    would either suppress fresh alerts or miscount uniqueness on recycled
+    ids."""
+    apd_tracker.reset()
+    state.apd_alerted_tracks.clear()
+    state.apd_unique_this_hour.clear()
+
+
+def reset_face_state(face_tracker):
+    """Tracker reset and dedup-state clear must always happen together — a
+    reset tracker reuses track ids, so a stale entry would suppress a fresh
+    verdict for what is actually a new, unclassified person."""
+    face_tracker.reset()
+    state.face_alerted_tracks.clear()
+
+
+def reset_tracking_state(tracker, apd_tracker=None, face_tracker=None):
     """After a Triton outage, drop tracker + crossing state so stale Kalman
     predictions can't generate phantom crossings on reconnect."""
     tracker.reset()
@@ -204,8 +230,9 @@ def reset_tracking_state(tracker, apd_tracker=None):
     state.state_out.clear()
     state.zone_inside_prev.clear()
     if apd_tracker is not None:
-        apd_tracker.reset()
-        state.apd_alerted_tracks.clear()
+        reset_apd_state(apd_tracker)
+    if face_tracker is not None:
+        reset_face_state(face_tracker)
 
 
 def show_debug_window(frame):
@@ -238,6 +265,7 @@ def main():
     # Initialize database
     if not cfg.DEBUG_MODE and not db_worker.init_db():
         return
+    lifecycle.pregenerate_hourly_tables(datetime.datetime.now(cfg.local_tz).date())
     last_data_id = lifecycle.initialize_counts()
     if not last_data_id:
         if not cfg.DEBUG_MODE:
@@ -286,12 +314,27 @@ def main():
     firesmoke_client = None
     firesmoke_classes = {}
     firesmoke_next_retry = 0.0
+    firesmoke_next_infer = 0.0
     if cfg.FIRE_SMOKE_ENABLED:
         firesmoke_client = TritonYoloClient(
             cfg.TRITON_URL, cfg.FIRE_SMOKE_MODEL, conf_thresh=cfg.FIRE_SMOKE_CONFIDENCE, class_id=None,
         )
         firesmoke_classes = load_model_classes(cfg.FIRE_SMOKE_MODEL)
         logging.info(f"Fire/Smoke detection enabled: model={cfg.FIRE_SMOKE_MODEL} conf={cfg.FIRE_SMOKE_CONFIDENCE}")
+
+    face_client = None
+    face_embed_client = None
+    face_tracker = None
+    face_next_retry = 0.0
+    face_was_down = False
+    if cfg.FACE_ENABLED:
+        face_client = TritonYoloClient(
+            cfg.TRITON_URL, cfg.FACE_MODEL, conf_thresh=cfg.FACE_CONFIDENCE, class_id=None,
+        )
+        face_embed_client = TritonEmbedClient(cfg.TRITON_URL, cfg.FACE_EMBED_MODEL)
+        face_tracker = BYTETracker(BYTETrackerArgs(), frame_rate=30)
+        face_db.start_cache_refresh_loop()
+        logging.info(f"Face detection enabled: model={cfg.FACE_MODEL} embed={cfg.FACE_EMBED_MODEL}")
 
     last_waiting_log = time.time()
 
@@ -342,8 +385,15 @@ def main():
                     time.sleep(0.2)  # don't spin the decode loop at full speed
                     continue
 
+                # Computed early: also gates how often fire/smoke inference runs
+                draw_now = cfg.DEBUG_MODE or mjpeg_server.viewer_count() > 0
+
+                # Detectors sharing the same input shape/dtype reuse one
+                # preprocessed tensor per frame instead of re-letterboxing
+                pre_cache = {}
+
                 try:
-                    dets = client.infer(detection_frame)  # [N,6] x1,y1,x2,y2,conf,cls
+                    dets = client.infer(detection_frame, pre_cache)  # [N,6] x1,y1,x2,y2,conf,cls
                 except TritonUnavailableError as e:
                     logging.error(f"{e} — retrying in {triton_backoff:.0f}s (capture stays alive)")
                     next_triton_retry = time.time() + triton_backoff
@@ -354,7 +404,7 @@ def main():
 
                 if triton_was_down:
                     logging.info("[Triton] Reconnected — resetting tracker state")
-                    reset_tracking_state(tracker, apd_tracker)
+                    reset_tracking_state(tracker, apd_tracker, face_tracker)
                     triton_was_down = False
                 triton_backoff = TRITON_BACKOFF_MIN_S
 
@@ -366,11 +416,10 @@ def main():
                 apd_tracks = []
                 if apd_client is not None and time.time() >= apd_next_retry:
                     try:
-                        apd_dets = apd_client.infer(detection_frame)
+                        apd_dets = apd_client.infer(detection_frame, pre_cache)
                         if apd_was_down:
                             logging.info("[APD] Reconnected — resetting APD tracker state")
-                            apd_tracker.reset()
-                            state.apd_alerted_tracks.clear()
+                            reset_apd_state(apd_tracker)
                             apd_was_down = False
                         apd_tracks = apd_tracker.update(
                             Detections(apd_dets[:, :4], apd_dets[:, 4], apd_dets[:, 5])
@@ -381,16 +430,35 @@ def main():
                         apd_was_down = True
 
                 # ---- Optional Fire/Smoke detection (no tracker, cooldown-gated alerts) ----
+                # Alerts fire at most once per cooldown window, so without a viewer
+                # there's no per-frame consumer — sample instead of inferring every frame.
                 firesmoke_dets = None
-                if firesmoke_client is not None and time.time() >= firesmoke_next_retry:
+                if (firesmoke_client is not None and time.time() >= firesmoke_next_retry
+                        and (draw_now or time.time() >= firesmoke_next_infer)):
                     try:
-                        firesmoke_dets = firesmoke_client.infer(detection_frame)
+                        firesmoke_dets = firesmoke_client.infer(detection_frame, pre_cache)
+                        firesmoke_next_infer = time.time() + FIRESMOKE_INFER_INTERVAL_S
                     except TritonUnavailableError as e:
                         logging.warning(f"Fire/Smoke inference unavailable, retrying in 30s: {e}")
                         firesmoke_next_retry = time.time() + 30
 
-                # Draw detection overlays (only when DEBUG_MODE or someone is watching the stream)
-                draw_now = cfg.DEBUG_MODE or mjpeg_server.viewer_count() > 0
+                # ---- Optional Face detection (independent model + tracker) ----
+                face_tracks = []
+                if face_client is not None and time.time() >= face_next_retry:
+                    try:
+                        face_dets = face_client.infer(detection_frame, pre_cache)
+                        if face_was_down:
+                            logging.info("[Face] Reconnected — resetting face tracker state")
+                            reset_face_state(face_tracker)
+                            face_was_down = False
+                        face_tracks = face_tracker.update(
+                            Detections(face_dets[:, :4], face_dets[:, 4], face_dets[:, 5])
+                        )
+                    except TritonUnavailableError as e:
+                        logging.warning(f"Face inference unavailable, retrying in 30s: {e}")
+                        face_next_retry = time.time() + 30
+                        face_was_down = True
+
                 if draw_now:
                     draw_static_overlays(frame)
 
@@ -458,6 +526,12 @@ def main():
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
                     apd.process_detection(track_id, label, conf, (ax1, ay1, ax2, ay2), original_frame)
 
+                # Bound apd_alerted_tracks: ByteTrack ids are monotonic within a run,
+                # so the smallest keys always belong to long-dead tracks.
+                if len(state.apd_alerted_tracks) > APD_ALERTED_TRACKS_MAX:
+                    for stale_id in sorted(state.apd_alerted_tracks)[:APD_ALERTED_TRACKS_MAX // 2]:
+                        del state.apd_alerted_tracks[stale_id]
+
                 # Process Fire/Smoke (cooldown-gated alerts; draws every live detection)
                 if firesmoke_dets is not None:
                     for row in firesmoke_dets:
@@ -477,6 +551,40 @@ def main():
                             cv2.putText(frame, label, (fx1, max(0, fy1 - 6)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                         firesmoke.process_detection(label, conf, frame)
+
+                # Process Face detections (per-track dedup; crop -> embed -> match -> verdict)
+                for trk in face_tracks:
+                    track_id = int(trk[4])
+                    if track_id in state.face_alerted_tracks:
+                        continue  # skip embedding/matching work for already-verdicted tracks
+                    fx1, fy1, fx2, fy2 = (int(v) for v in trk[:4])
+                    fx1 += cfg.CROP_X1
+                    fy1 += cfg.CROP_Y1
+                    fx2 += cfg.CROP_X1
+                    fy2 += cfg.CROP_Y1
+                    try:
+                        face_crop = original_frame[max(0, fy1):fy2, max(0, fx1):fx2]
+                        if face_crop.size == 0:
+                            continue
+                        embedding = face_embed_client.infer(face_crop)
+                        name, similarity = face_db.match(embedding)
+                        label = name if name else 'intruder'
+                        tag = cfg.INSIDER_TAG if name else cfg.INTRUDER_TAG
+                    except TritonUnavailableError as e:
+                        logging.warning(f"Face embedding unavailable, skipping this track: {e}")
+                        continue
+                    color = (0, 200, 0) if name else (0, 0, 255)
+                    if draw_now:
+                        cv2.rectangle(frame, (fx1, fy1), (fx2, fy2), color, 2)
+                        cv2.putText(frame, label, (fx1, max(0, fy1 - 6)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    face.process_detection(track_id, label, tag, similarity, (fx1, fy1, fx2, fy2), original_frame)
+
+                # Bound face_alerted_tracks: ByteTrack ids are monotonic within a run,
+                # so the smallest keys always belong to long-dead tracks.
+                if len(state.face_alerted_tracks) > FACE_ALERTED_TRACKS_MAX:
+                    for stale_id in sorted(state.face_alerted_tracks)[:FACE_ALERTED_TRACKS_MAX // 2]:
+                        state.face_alerted_tracks.discard(stale_id)
 
                 # bbox overlay file for the dashboard
                 bbox_writer.write_bbox_file()

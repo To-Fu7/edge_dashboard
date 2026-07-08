@@ -24,6 +24,28 @@ export interface DeviceEnvConfig {
   YOLO_MODEL?: string;        // legacy (pre-Triton); used to derive TRITON_MODEL
   YOLO_CONFIDENCE: string;
   ENABLE_NVDEC?: string;      // legacy (pre-Triton); ignored by the thin client
+  PEOPLE_COUNTING_TAG?: string;   // 'info' | 'alarm' tag attached to person_in/out MQTT payloads
+  APD_ENABLED?: string;
+  APD_MODEL?: string;
+  APD_CONFIDENCE?: string;
+  APD_TAG?: string;               // 'info' | 'alarm'
+  FIRE_SMOKE_ENABLED?: string;
+  FIRE_SMOKE_MODEL?: string;
+  FIRE_SMOKE_CONFIDENCE?: string;
+  FIRE_TAG?: string;               // 'info' | 'alarm'
+  SMOKE_TAG?: string;              // 'info' | 'alarm'
+  FIRE_SMOKE_COOLDOWN_MINUTES?: string;
+  FACE_ENABLED?: string;
+  FACE_MODEL?: string;             // YOLOv8-face detector, Triton model repo name
+  FACE_EMBED_MODEL?: string;       // ArcFace embedder, Triton model repo name
+  FACE_CONFIDENCE?: string;
+  FACE_MATCH_THRESHOLD?: string;   // min cosine similarity to call it a match
+  FACE_CACHE_REFRESH_MINUTES?: string;
+  INSIDER_TAG?: string;            // 'info' | 'alarm'
+  INTRUDER_TAG?: string;           // 'info' | 'alarm'
+  MQTT_APD_TOPIC?: string;
+  MQTT_FIRESMOKE_TOPIC?: string;
+  MQTT_FACE_TOPIC?: string;
   JPEG_QUALITY: string;
   FPS_LIMIT: string;
   FRAME_SKIP: string;
@@ -83,6 +105,7 @@ export type HardwareMode = 'jetson' | 'server' | 'cpu';
 export interface TritonSettings {
   imageTag: string;       // tritonserver release, e.g. '24.08' (suffix -py3/-py3-igpu is derived from hardware mode)
   defaultModel: string;   // model repository name used for new devices, e.g. 'yolo26m_640'
+  faceEmbedModel: string; // ArcFace model repo name used to embed enrollment photos (must match cameras' FACE_EMBED_MODEL)
 }
 
 export interface GlobalSettings {
@@ -101,6 +124,8 @@ export interface GlobalSettings {
     port: string;
     username: string;
     password: string;
+    activityTopicTemplate: string;   // '{code}' is replaced with the device code at creation time
+    intervalTopicTemplate: string;
   };
   defaults: {
     debug_mode: string;
@@ -110,6 +135,18 @@ export interface GlobalSettings {
     jpeg_quality: string;
     fps_limit: string;
     frame_skip: string;
+    people_counting_tag: string;
+    apd_confidence: string;
+    apd_tag: string;
+    fire_smoke_confidence: string;
+    fire_tag: string;
+    smoke_tag: string;
+    fire_smoke_cooldown_minutes: string;
+    face_confidence: string;
+    face_match_threshold: string;
+    insider_tag: string;
+    intruder_tag: string;
+    face_cache_refresh_minutes: string;
   };
 }
 
@@ -119,6 +156,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   triton: {
     imageTag: '24.08',
     defaultModel: 'yolo26m_640',
+    faceEmbedModel: '',
   },
   pg: {
     host: 'host.docker.internal',
@@ -132,6 +170,8 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     port: '1883',
     username: '',
     password: '',
+    activityTopicTemplate: '/person_in/{code}',
+    intervalTopicTemplate: '/resampling_person/{code}',
   },
   defaults: {
     debug_mode: 'false',
@@ -141,5 +181,17 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     jpeg_quality: '40',
     fps_limit: '0',
     frame_skip: '2',
+    people_counting_tag: 'info',
+    apd_confidence: '0.3',
+    apd_tag: 'alarm',
+    fire_smoke_confidence: '0.3',
+    fire_tag: 'alarm',
+    smoke_tag: 'alarm',
+    fire_smoke_cooldown_minutes: '5',
+    face_confidence: '0.5',
+    face_match_threshold: '0.5',
+    insider_tag: 'info',
+    intruder_tag: 'alarm',
+    face_cache_refresh_minutes: '10',
   },
 };

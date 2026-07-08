@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StatusBadge } from '@/components/StatusBadge';
+import { TagSelect } from '@/components/TagSelect';
 import { LineDrawer } from '@/components/LineDrawer';
 import { ZoneDrawer, type DrawnZone } from '@/components/ZoneDrawer';
 import type { CropRect } from '@/lib/types';
@@ -90,6 +91,32 @@ function drawnLinesToEnv(lines: DrawnLine[]): Record<string, string> {
     result[`line${line.label}`] = `[(${line.p1.x}, ${line.p1.y}), (${line.p2.x}, ${line.p2.y})]`;
   }
   return result;
+}
+
+/** Triton model picker with ready-state badge and free-text fallback when the
+ *  repository index is unavailable — used by the primary, APD, and Fire/Smoke
+ *  model fields so the readiness display can't drift between them. */
+function ModelSelect({ value, onChange, placeholder, models }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  models: { name: string; state: string }[];
+}) {
+  if (models.length === 0) {
+    return <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />;
+  }
+  return (
+    <Select value={value} onValueChange={v => v && onChange(v)}>
+      <SelectTrigger><SelectValue placeholder="Select a model" /></SelectTrigger>
+      <SelectContent>
+        {models.map(m => (
+          <SelectItem key={m.name} value={m.name}>
+            {m.name} {m.state === 'READY' ? '● ready' : m.state === 'OFFLINE' ? '○ triton offline' : `(${m.state.toLowerCase()})`}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 export default function DeviceDetailPage({ params }: { params: Promise<{ code: string }> }) {
@@ -314,6 +341,15 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
               <FormField label="Daily Send Time">
                 <Input value={env.DAILY_SEND_TIME || '23:59'} onChange={e => setField('DAILY_SEND_TIME', e.target.value)} placeholder="23:59" />
               </FormField>
+              <FormField label="APD Topic">
+                <Input value={env.MQTT_APD_TOPIC || ''} onChange={e => setField('MQTT_APD_TOPIC', e.target.value)} />
+              </FormField>
+              <FormField label="Fire/Smoke Topic">
+                <Input value={env.MQTT_FIRESMOKE_TOPIC || ''} onChange={e => setField('MQTT_FIRESMOKE_TOPIC', e.target.value)} />
+              </FormField>
+              <FormField label="Face Topic">
+                <Input value={env.MQTT_FACE_TOPIC || ''} onChange={e => setField('MQTT_FACE_TOPIC', e.target.value)} />
+              </FormField>
             </div>
           </Section>
 
@@ -339,27 +375,30 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             </div>
           </Section>
 
+          <Section title="Detection Mode">
+            <FormField label="Mode">
+              <Select value={env.DETECTION_MODE || 'line_crossing'} onValueChange={v => v && setField('DETECTION_MODE', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="line_crossing">Line Crossing</SelectItem>
+                  <SelectItem value="zone">Zone Detection</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Modes are exclusive. Switching mode clears the other mode&apos;s configuration on save.
+              </p>
+            </FormField>
+          </Section>
+
           <Section title="Detection Model (Triton)">
             <div className="grid grid-cols-2 gap-4">
               <FormField label="Triton Model">
-                {tritonModels.length > 0 ? (
-                  <Select value={env.TRITON_MODEL || ''} onValueChange={v => v && setField('TRITON_MODEL', v)}>
-                    <SelectTrigger><SelectValue placeholder="Select a model" /></SelectTrigger>
-                    <SelectContent>
-                      {tritonModels.map(m => (
-                        <SelectItem key={m.name} value={m.name}>
-                          {m.name} {m.state === 'READY' ? '● ready' : m.state === 'OFFLINE' ? '○ triton offline' : `(${m.state.toLowerCase()})`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    value={env.TRITON_MODEL || ''}
-                    onChange={e => setField('TRITON_MODEL', e.target.value)}
-                    placeholder="yolo26m_640 (Triton model repository name)"
-                  />
-                )}
+                <ModelSelect
+                  value={env.TRITON_MODEL || ''}
+                  onChange={v => setField('TRITON_MODEL', v)}
+                  placeholder="yolo26m_640 (Triton model repository name)"
+                  models={tritonModels}
+                />
               </FormField>
               <FormField label="Confidence (0.0–1.0)">
                 <Input type="number" step="0.05" min="0" max="1" value={env.YOLO_CONFIDENCE || '0.3'} onChange={e => setField('YOLO_CONFIDENCE', e.target.value)} />
@@ -381,6 +420,117 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             </div>
           </Section>
 
+          <Section title="Additional Detection">
+            <div className="space-y-5">
+              <div className="space-y-3 rounded-md border border-border p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">APD (PPE Violation) Detection</span>
+                  <Switch
+                    checked={env.APD_ENABLED === 'true'}
+                    onCheckedChange={v => setField('APD_ENABLED', v ? 'true' : 'false')}
+                  />
+                </div>
+                {env.APD_ENABLED === 'true' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField label="Model">
+                      <ModelSelect
+                        value={env.APD_MODEL || ''}
+                        onChange={v => setField('APD_MODEL', v)}
+                        placeholder="apd_640"
+                        models={tritonModels}
+                      />
+                    </FormField>
+                    <FormField label="Confidence (0.0–1.0)">
+                      <Input type="number" step="0.05" min="0" max="1" value={env.APD_CONFIDENCE || '0.3'} onChange={e => setField('APD_CONFIDENCE', e.target.value)} />
+                    </FormField>
+                    <FormField label="Tag">
+                      <TagSelect value={env.APD_TAG || 'alarm'} onChange={v => setField('APD_TAG', v)} />
+                    </FormField>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3 rounded-md border border-border p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Fire &amp; Smoke Detection</span>
+                  <Switch
+                    checked={env.FIRE_SMOKE_ENABLED === 'true'}
+                    onCheckedChange={v => setField('FIRE_SMOKE_ENABLED', v ? 'true' : 'false')}
+                  />
+                </div>
+                {env.FIRE_SMOKE_ENABLED === 'true' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField label="Model">
+                      <ModelSelect
+                        value={env.FIRE_SMOKE_MODEL || ''}
+                        onChange={v => setField('FIRE_SMOKE_MODEL', v)}
+                        placeholder="fire_smoke_640"
+                        models={tritonModels}
+                      />
+                    </FormField>
+                    <FormField label="Confidence (0.0–1.0)">
+                      <Input type="number" step="0.05" min="0" max="1" value={env.FIRE_SMOKE_CONFIDENCE || '0.3'} onChange={e => setField('FIRE_SMOKE_CONFIDENCE', e.target.value)} />
+                    </FormField>
+                    <FormField label="Fire Tag">
+                      <TagSelect value={env.FIRE_TAG || 'alarm'} onChange={v => setField('FIRE_TAG', v)} />
+                    </FormField>
+                    <FormField label="Smoke Tag">
+                      <TagSelect value={env.SMOKE_TAG || 'alarm'} onChange={v => setField('SMOKE_TAG', v)} />
+                    </FormField>
+                    <FormField label="Cooldown (minutes)">
+                      <Input type="number" min="1" value={env.FIRE_SMOKE_COOLDOWN_MINUTES || '5'} onChange={e => setField('FIRE_SMOKE_COOLDOWN_MINUTES', e.target.value)} />
+                    </FormField>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3 rounded-md border border-border p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Face Detection (Insider/Intruder)</span>
+                  <Switch
+                    checked={env.FACE_ENABLED === 'true'}
+                    onCheckedChange={v => setField('FACE_ENABLED', v ? 'true' : 'false')}
+                  />
+                </div>
+                {env.FACE_ENABLED === 'true' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField label="Face Detector Model">
+                      <ModelSelect
+                        value={env.FACE_MODEL || ''}
+                        onChange={v => setField('FACE_MODEL', v)}
+                        placeholder="face_640"
+                        models={tritonModels}
+                      />
+                    </FormField>
+                    <FormField label="Face Embedding Model">
+                      <ModelSelect
+                        value={env.FACE_EMBED_MODEL || ''}
+                        onChange={v => setField('FACE_EMBED_MODEL', v)}
+                        placeholder="arcface_112"
+                        models={tritonModels}
+                      />
+                    </FormField>
+                    <FormField label="Confidence (0.0–1.0)">
+                      <Input type="number" step="0.05" min="0" max="1" value={env.FACE_CONFIDENCE || '0.5'} onChange={e => setField('FACE_CONFIDENCE', e.target.value)} />
+                    </FormField>
+                    <FormField label="Match Threshold (0.0–1.0)">
+                      <Input type="number" step="0.05" min="0" max="1" value={env.FACE_MATCH_THRESHOLD || '0.5'} onChange={e => setField('FACE_MATCH_THRESHOLD', e.target.value)} />
+                    </FormField>
+                    <FormField label="Insider Tag">
+                      <TagSelect value={env.INSIDER_TAG || 'info'} onChange={v => setField('INSIDER_TAG', v)} />
+                    </FormField>
+                    <FormField label="Intruder Tag">
+                      <TagSelect value={env.INTRUDER_TAG || 'alarm'} onChange={v => setField('INTRUDER_TAG', v)} />
+                    </FormField>
+                    <FormField label="Cache Refresh (minutes)">
+                      <Input type="number" min="1" value={env.FACE_CACHE_REFRESH_MINUTES || '10'} onChange={e => setField('FACE_CACHE_REFRESH_MINUTES', e.target.value)} />
+                    </FormField>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Section>
+
           <div className="flex justify-end">
             <Button onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : 'Save Settings'}
@@ -390,28 +540,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
 
         {/* ── LINE CONFIGURATION ── */}
         <TabsContent value="lines" className="space-y-6 pt-4">
-          <Section title="Detection Mode">
-            <div className="flex gap-3">
-              {(['line_crossing', 'zone'] as const).map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setField('DETECTION_MODE', m)}
-                  className={`px-4 py-2 rounded-md text-sm border transition-colors ${
-                    (env.DETECTION_MODE || 'line_crossing') === m
-                      ? 'border-primary bg-primary/10 text-primary font-medium'
-                      : 'border-border text-muted-foreground hover:bg-accent'
-                  }`}
-                >
-                  {m === 'line_crossing' ? 'Line Crossing' : 'Zone Detection'}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Modes are exclusive. Switching mode clears the other mode&apos;s configuration on save.
-            </p>
-          </Section>
-
           {(env.DETECTION_MODE || 'line_crossing') === 'line_crossing' ? (
             <>
               <Section title="Detection Behavior">

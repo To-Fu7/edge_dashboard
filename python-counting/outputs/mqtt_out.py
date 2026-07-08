@@ -52,42 +52,71 @@ def shutdown_mqtt():
         mqtt_client.disconnect()
 
 
-def send_person_in_mqtt(cropped_image, record_id, event_type="person_in"):
-    """Send cropped image via MQTT when person enters"""
+def _publish_image_event(image, extra_fields, log_label, topic=None):
+    """Shared guard/encode/publish path for image-carrying MQTT events.
+    extra_fields are merged into the common device/timestamp envelope.
+    topic defaults to cfg.MQTT_TOPIC (person-counting's shared topic);
+    per-type detectors pass their own resolved topic (Part C)."""
     if cfg.DEBUG_MODE:
-        logging.info(f"DEBUG_MODE: Skipping MQTT send for {event_type}")
+        logging.info(f"DEBUG_MODE: Skipping MQTT send for {log_label}")
         return
 
     if mqtt_client is None:
-        logging.warning("MQTT client not initialized, skipping message")
+        logging.warning(f"MQTT client not initialized, skipping {log_label}")
         return
 
     try:
-        # Convert cropped image to bytes with higher quality
-        _, buffer = cv2.imencode('.jpg', cropped_image, [cv2.IMWRITE_JPEG_QUALITY, cfg.JPEG_QUALITY])
-        image_bytes = buffer.tobytes()
+        _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, cfg.JPEG_QUALITY])
 
-        # Create payload
         payload = {
-            "record_id": record_id,
             "device_id": cfg.device_id,
             "device_code": cfg.device_code,
             "device_name": cfg.device_name,
             "timestamp": datetime.datetime.now(cfg.local_tz).isoformat(),
-            "event": event_type,
-            "image": base64.b64encode(image_bytes).decode('utf-8')
+            **extra_fields,
+            "image": base64.b64encode(buffer.tobytes()).decode('utf-8'),
         }
 
-        # Send to MQTT
-        result = mqtt_client.publish(cfg.MQTT_TOPIC, json.dumps(payload), qos=1)
-
+        result = mqtt_client.publish(topic or cfg.MQTT_TOPIC, json.dumps(payload), qos=1)
         if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            logging.info(f"Person {event_type.upper()} image sent via MQTT for record {record_id}")
+            logging.info(f"{log_label} sent via MQTT")
         else:
-            logging.error(f"Failed to send MQTT message, error code: {result.rc}")
-
+            logging.error(f"Failed to send MQTT message ({log_label}), error code: {result.rc}")
     except Exception as e:
-        logging.error(f"Error sending MQTT message: {e}")
+        logging.error(f"Error sending MQTT message ({log_label}): {e}")
+
+
+def send_person_in_mqtt(cropped_image, record_id, event_type="person_in"):
+    """Send cropped image via MQTT when person enters"""
+    _publish_image_event(
+        cropped_image,
+        {
+            "record_id": record_id,
+            "event": event_type,
+            "type": "people_counting",
+            "tag": cfg.PEOPLE_COUNTING_TAG,
+        },
+        f"person {event_type} (record {record_id})",
+    )
+
+
+def send_detection_event_mqtt(image, detection_type, tag, label, confidence, track_id=None, topic=None):
+    """Publish an APD/fire/smoke/face event to its own per-type topic
+    (Part C) — caller passes cfg.MQTT_APD_TOPIC / MQTT_FIRESMOKE_TOPIC /
+    MQTT_FACE_TOPIC; falls back to cfg.MQTT_TOPIC if topic is omitted."""
+    _publish_image_event(
+        image,
+        {
+            "event": f"{detection_type}_detected",
+            "type": detection_type,
+            "tag": tag,
+            "label": label,
+            "confidence": confidence,
+            "track_id": track_id,
+        },
+        f"{detection_type} event (label={label}, conf={confidence:.2f})",
+        topic=topic,
+    )
 
 
 def send_interval_mqtt_data():
@@ -97,6 +126,8 @@ def send_interval_mqtt_data():
 
     if mqtt_client is None:
         logging.warning("MQTT client not initialized, skipping interval data")
+        # mark as sent so this fires once per interval, not on every frame
+        state.last_mqtt_send = datetime.datetime.now(cfg.local_tz)
         return
 
     # Guard against rapid re-entry (multiple frames triggering in the same tick)
