@@ -57,10 +57,14 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { deviceCode, deviceName, rtspUrl, deviceId: requestedDeviceId } = body;
+    const { deviceCode, deviceName, rtspUrl, deviceId: requestedDeviceId, deviceType = 'counting', vncHost, vncPort, vncPassword } = body;
 
     if (!deviceCode || !deviceName) {
       return NextResponse.json({ error: 'deviceCode and deviceName are required' }, { status: 400 });
+    }
+
+    if (deviceType === 'vnc' && !vncHost) {
+      return NextResponse.json({ error: 'vncHost is required for VNC devices' }, { status: 400 });
     }
 
     if (/\s/.test(deviceCode)) {
@@ -86,6 +90,21 @@ export async function POST(request: Request) {
 
     const settings = readSettings();
     const deviceId = requestedDeviceId || uuidv4();
+
+    // VNC devices: minimal env, no Docker Compose service needed
+    if (deviceType === 'vnc') {
+      writeDeviceEnv(deviceCode, {
+        DEVICE_ID: deviceId,
+        DEVICE_NAME: deviceName,
+        DEVICE_CODE: deviceCode,
+        DEVICE_TYPE: 'vnc',
+        VNC_HOST: vncHost,
+        VNC_PORT: vncPort || '5900',
+        VNC_PASSWORD: vncPassword || '',
+        RTSP_URL: '',
+      });
+      return NextResponse.json({ success: true, deviceCode, deviceId }, { status: 201 });
+    }
 
     writeDeviceEnv(deviceCode, {
       DEVICE_ID: deviceId,

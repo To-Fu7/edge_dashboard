@@ -8,14 +8,29 @@ import { Switch } from '@/components/ui/switch';
 import { ModelSelect } from '@/components/ModelSelect';
 import { TagSelect } from '@/components/TagSelect';
 import { toast } from 'sonner';
+import { Trash2, Plus, KeyRound, Loader2, User } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import type { GlobalSettings } from '@/lib/types';
 import { DEFAULT_SETTINGS } from '@/lib/types';
+
+interface UserRecord { id: string; username: string; createdAt: string; }
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tritonModels, setTritonModels] = useState<{ name: string; state: string }[]>([]);
+
+  // Users
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [userDialog, setUserDialog] = useState<null | 'add' | { id: string; username: string }>(null);
+  const [userForm, setUserForm] = useState({ username: '', password: '', confirm: '' });
+  const [userSaving, setUserSaving] = useState(false);
+
+  function loadUsers() {
+    fetch('/api/auth/users').then(r => r.json()).then(d => { if (Array.isArray(d)) setUsers(d); }).catch(() => {});
+  }
 
   useEffect(() => {
     fetch('/api/settings')
@@ -27,6 +42,8 @@ export default function SettingsPage() {
       .then(r => r.json())
       .then(d => { if (d.models) setTritonModels(d.models); })
       .catch(() => { /* Triton model list unavailable — keep free-text fallback */ });
+    fetch('/api/auth/me').then(r => r.json()).then(d => { if (d.userId) setCurrentUserId(d.userId); }).catch(() => {});
+    loadUsers();
   }, []);
 
   function setPg(key: keyof GlobalSettings['pg'], value: string) {
@@ -332,6 +349,128 @@ export default function SettingsPage() {
           {saving ? 'Saving...' : 'Save Settings'}
         </Button>
       </div>
+
+      {/* Users */}
+      <Section title="Users">
+        <div className="space-y-2">
+          {users.map(u => (
+            <div key={u.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-muted/30">
+              <User className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="flex-1 text-sm font-medium">{u.username}</span>
+              <span className="text-xs text-muted-foreground">
+                {new Date(u.createdAt).toLocaleDateString()}
+              </span>
+              <button
+                onClick={() => { setUserDialog({ id: u.id, username: u.username }); setUserForm({ username: '', password: '', confirm: '' }); }}
+                title="Change password"
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm(`Delete user "${u.username}"?`)) return;
+                  const res = await fetch(`/api/auth/users/${u.id}`, { method: 'DELETE' });
+                  const d = await res.json();
+                  if (!res.ok) { toast.error(d.error); return; }
+                  toast.success('User deleted');
+                  loadUsers();
+                }}
+                disabled={u.id === currentUserId}
+                title={u.id === currentUserId ? "Can't delete yourself" : 'Delete user'}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setUserDialog('add'); setUserForm({ username: '', password: '', confirm: '' }); }}
+            className="w-full"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Add user
+          </Button>
+        </div>
+      </Section>
+
+      {/* Add / change-password dialog */}
+      <Dialog open={userDialog !== null} onOpenChange={open => { if (!open) setUserDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {userDialog === 'add' ? 'Add User' : `Change password — ${userDialog !== null && typeof userDialog === 'object' ? userDialog.username : ''}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {userDialog === 'add' && (
+              <div className="space-y-1.5">
+                <Label>Username</Label>
+                <Input
+                  value={userForm.username}
+                  onChange={e => setUserForm(p => ({ ...p, username: e.target.value }))}
+                  autoFocus
+                />
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>New password</Label>
+              <Input
+                type="password"
+                value={userForm.password}
+                onChange={e => setUserForm(p => ({ ...p, password: e.target.value }))}
+                autoFocus={userDialog !== 'add'}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Confirm password</Label>
+              <Input
+                type="password"
+                value={userForm.confirm}
+                onChange={e => setUserForm(p => ({ ...p, confirm: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUserDialog(null)}>Cancel</Button>
+            <Button
+              disabled={userSaving || !userForm.password || userForm.password !== userForm.confirm || (userDialog === 'add' && !userForm.username)}
+              onClick={async () => {
+                setUserSaving(true);
+                try {
+                  let res: Response;
+                  if (userDialog === 'add') {
+                    res = await fetch('/api/auth/users', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ username: userForm.username, password: userForm.password }),
+                    });
+                  } else {
+                    res = await fetch(`/api/auth/users/${(userDialog as { id: string }).id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ password: userForm.password }),
+                    });
+                  }
+                  const d = await res.json();
+                  if (!res.ok) { toast.error(d.error); return; }
+                  toast.success(userDialog === 'add' ? 'User added' : 'Password changed');
+                  setUserDialog(null);
+                  loadUsers();
+                } finally {
+                  setUserSaving(false);
+                }
+              }}
+            >
+              {userSaving && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+              {userDialog === 'add' ? 'Add' : 'Change'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

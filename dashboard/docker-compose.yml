@@ -1,21 +1,16 @@
-# Node-RED ("Automation" nav item) is temporarily DISABLED — see
-# nodered/DEV_NOTES.md (gitignored) for status/why. Re-enable by uncommenting
-# the `nodered` service below, the `dashboard` service's `depends_on`/
-# `NODERED_URL` lines, and the matching commented-out blocks in
-# server.js / components/Sidebar.tsx.
 services:
   dashboard:
     build:
       context: .
       dockerfile: Dockerfile
-    image: epiwalk-dashboard:latest
-    container_name: epiwalk-dashboard
+    image: edge-dashboard:latest
+    container_name: edge-dashboard
     restart: unless-stopped
     mem_limit: 4g
     memswap_limit: 4g
     ports:
       - "3000:3000"
-    runtime: nvidia
+    runtime: ${DOCKER_RUNTIME:-runc}
     volumes:
       - ../python-counting:/python-counting
       - ../stream-gateway:/stream-gateway:ro
@@ -27,31 +22,41 @@ services:
       - HOST_PYTHON_COUNTING_DIR=${HOST_PYTHON_COUNTING_DIR}
       - STREAM_GATEWAY_DIR=/stream-gateway
       - SETTINGS_FILE=/app/data/settings.json
-      # - NODERED_URL=http://nodered:1880
+      - NODERED_URL=http://edge-nodered:1880
+      - AUTH_SECRET=${AUTH_SECRET}
+      - USERS_FILE=/app/data/users.json
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=utility
     networks:
       - default
       - envisions
-    # depends_on:
-    #   - nodered
-  # nodered:
-  #   image: nodered/node-red:latest
-  #   container_name: nodered
-  #   restart: unless-stopped
-  #   volumes:
-  #     - nodered-data:/data
-  #     - ./nodered/settings.js:/data/settings.js:ro
-  #     - ./nodered/custom-theme.css:/data/custom-theme.css:ro
-  #   ports:
-  #     - "1880:1880"   # direct access for local dev / debugging only — the
-  #                       # dashboard proxies /automation to this internally
-  #                       # over the envisions network in normal use
-  #   networks:
-  #     - envisions
+    depends_on:
+      nodered:
+        condition: service_healthy
+
+  nodered:
+    image: nodered/node-red:latest
+    container_name: edge-nodered
+    restart: unless-stopped
+    runtime: runc   # force standard OCI runtime — nodered has no GPU needs,
+                    # and the Jetson's default-runtime is nvidia which would fail here
+    volumes:
+      - nodered-data:/data
+    ports:
+      - "1880:1880"   # direct access for local dev / debugging only
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:1880/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - envisions
+
 volumes:
   dashboard-data:
-  # nodered-data:
+  nodered-data:
+
 networks:
   default: {}
   envisions:

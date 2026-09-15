@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import Hls from 'hls.js';
+
+const VncViewer = dynamic(
+  () => import('@/components/VncViewer').then(m => m.VncViewer),
+  { ssr: false }
+);
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -114,6 +120,26 @@ function drawLineOverlay(
 }
 
 function StreamCell({ device }: { device: Device }) {
+  // ── VNC shortcut ────────────────────────────────────────────────────────────
+  if (device.env?.DEVICE_TYPE === 'vnc') {
+    return (
+      <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
+        <VncViewer
+          deviceCode={device.deviceCode}
+          password={device.env.VNC_PASSWORD || undefined}
+        />
+        <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/90 to-transparent px-3 py-2 pointer-events-none">
+          <span className="text-white text-xs font-medium truncate">{device.deviceName}</span>
+        </div>
+        <div className="absolute top-2 left-2 pointer-events-none">
+          <span className="text-xs font-mono text-white/70 bg-black/50 rounded px-1.5 py-0.5">
+            {device.deviceCode}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [streamLoaded, setStreamLoaded] = useState(false);
@@ -363,7 +389,7 @@ export default function StreamPage() {
           No cameras configured.
         </div>
       ) : (
-        <div className={`grid gap-1.5 flex-1 ${gridClass[layout]}`}>
+        <div className={`grid gap-1.5 ${layout === '1' ? '' : 'flex-1'} ${gridClass[layout]}`}>
           {devices.map(device => (
             <StreamCell key={device.deviceCode} device={device} />
           ))}

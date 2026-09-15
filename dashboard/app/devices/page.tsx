@@ -108,14 +108,14 @@ export default function DevicesPage() {
           </Button>
           <Button size="sm" onClick={() => setShowAdd(true)}>
             <Plus className="w-4 h-4 mr-2" />
-            Add Camera
+            Add Device
           </Button>
         </div>
       </div>
 
       {!loading && devices.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground text-sm">
-          No cameras configured. Click &quot;Add Camera&quot; to get started.
+          No cameras configured. Click &quot;Add Device&quot; to get started.
         </div>
       ) : (
         <div className="rounded-lg border border-border overflow-hidden">
@@ -194,11 +194,10 @@ function AddCameraDialog({
 }) {
   const [saving, setSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [deviceType, setDeviceType] = useState<'counting' | 'vnc'>('counting');
   const [form, setForm] = useState({
-    deviceName: '',
-    deviceCode: '',
-    rtspUrl: '',
-    deviceId: '',
+    deviceName: '', deviceCode: '', rtspUrl: '', deviceId: '',
+    vncHost: '', vncPort: '5900', vncPassword: '',
   });
 
   function handleChange(field: string, value: string) {
@@ -210,21 +209,19 @@ function AddCameraDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (/\s/.test(form.deviceCode)) {
-      toast.error('Device Code must not contain spaces');
-      return;
-    }
+    if (/\s/.test(form.deviceCode)) { toast.error('Device Code must not contain spaces'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/devices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, deviceType }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      toast.success(`Camera "${form.deviceCode}" created`);
-      setForm({ deviceName: '', deviceCode: '', rtspUrl: '', deviceId: '' });
+      toast.success(`${deviceType === 'vnc' ? 'VNC device' : 'Camera'} "${form.deviceCode}" created`);
+      setForm({ deviceName: '', deviceCode: '', rtspUrl: '', deviceId: '', vncHost: '', vncPort: '5900', vncPassword: '' });
+      setDeviceType('counting');
       setShowAdvanced(false);
       onSuccess();
     } catch (e) {
@@ -238,61 +235,85 @@ function AddCameraDialog({
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Camera</DialogTitle>
+          <DialogTitle>Add Device</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+
+          {/* Type selector */}
+          <div className="flex gap-2">
+            {(['counting', 'vnc'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setDeviceType(t)}
+                className={`flex-1 py-2 px-3 rounded-md text-sm border transition-colors ${
+                  deviceType === t
+                    ? 'border-primary bg-primary/10 text-primary font-medium'
+                    : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+                }`}
+              >
+                {t === 'counting' ? 'Counting Camera' : 'VNC Remote Desktop'}
+              </button>
+            ))}
+          </div>
+
           <Field label="Device Name" required>
-            <Input
-              value={form.deviceName}
-              onChange={e => handleChange('deviceName', e.target.value)}
-              placeholder="CCTV B2 Selatan"
-              required
-            />
+            <Input value={form.deviceName} onChange={e => handleChange('deviceName', e.target.value)}
+              placeholder={deviceType === 'vnc' ? 'PC Kasir' : 'CCTV B2 Selatan'} required />
           </Field>
           <Field label="Device Code" hint="No spaces — used as identifier" required>
-            <Input
-              value={form.deviceCode}
+            <Input value={form.deviceCode}
               onChange={e => handleChange('deviceCode', e.target.value.replace(/\s/g, '_').toUpperCase())}
-              placeholder="CCTV_EPW_B2S"
-              required
-              pattern="^\S+$"
-            />
-          </Field>
-          <Field label="Stream URL (RTSP)">
-            <Input
-              value={form.rtspUrl}
-              onChange={e => handleChange('rtspUrl', e.target.value)}
-              placeholder="rtsp://user:pass@192.168.1.1/stream"
-            />
+              placeholder={deviceType === 'vnc' ? 'PC_KASIR' : 'CCTV_EPW_B2S'} required pattern="^\S+$" />
           </Field>
 
-          {!showAdvanced ? (
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(true)}
-              className="text-xs text-muted-foreground hover:text-foreground underline"
-            >
-              Advanced options
-            </button>
+          {deviceType === 'counting' ? (
+            <>
+              <Field label="Stream URL (RTSP)">
+                <Input value={form.rtspUrl} onChange={e => handleChange('rtspUrl', e.target.value)}
+                  placeholder="rtsp://user:pass@192.168.1.1/stream" />
+              </Field>
+              {!showAdvanced ? (
+                <button type="button" onClick={() => setShowAdvanced(true)}
+                  className="text-xs text-muted-foreground hover:text-foreground underline">
+                  Advanced options
+                </button>
+              ) : (
+                <Field label="Device ID (optional)"
+                  hint="UUID — only set this to reuse an existing device's history. Leave blank to generate.">
+                  <Input value={form.deviceId} onChange={e => handleChange('deviceId', e.target.value)}
+                    placeholder="123e4567-e89b-12d3-a456-426614174000"
+                    pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                    title="Must be a valid UUID" />
+                </Field>
+              )}
+            </>
           ) : (
-            <Field
-              label="Device ID (optional)"
-              hint="UUID — only set this to reuse an existing device's history (e.g. migrating from another system). Leave blank to generate a new one."
-            >
-              <Input
-                value={form.deviceId}
-                onChange={e => handleChange('deviceId', e.target.value)}
-                placeholder="123e4567-e89b-12d3-a456-426614174000"
-                pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-                title="Must be a valid UUID"
-              />
-            </Field>
+            <>
+              <Field label="VNC Host (IP / hostname)" required>
+                <Input value={form.vncHost} onChange={e => handleChange('vncHost', e.target.value)}
+                  placeholder="192.168.1.50" required />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Port">
+                  <Input type="number" value={form.vncPort} onChange={e => handleChange('vncPort', e.target.value)}
+                    placeholder="5900" min="1" max="65535" />
+                </Field>
+                <Field label="Password (optional)">
+                  <Input type="password" value={form.vncPassword} onChange={e => handleChange('vncPassword', e.target.value)}
+                    placeholder="Auto-connect if set" autoComplete="new-password" />
+                </Field>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-1">
+                If password is left blank, noVNC will prompt on each connection.
+              </p>
+            </>
           )}
 
           <div className="flex gap-2 pt-2 justify-end">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             <Button type="submit" disabled={saving}>
-              {saving ? 'Creating...' : 'Create Camera'}
+              {saving ? 'Creating…' : deviceType === 'vnc' ? 'Add VNC Device' : 'Create Camera'}
             </Button>
           </div>
         </form>

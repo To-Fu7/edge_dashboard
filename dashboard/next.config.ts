@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   // /automation to Node-RED, HTTP + WebSocket) and can't be combined with
   // Next's own generated standalone server.js.
   serverExternalPackages: ['dockerode', 'docker-modem', 'ssh2', 'js-yaml'],
+  // noVNC ships as ES modules with deep imports — Turbopack/webpack need this
+  // to transpile it rather than treat it as an opaque external.
+  transpilePackages: ['@novnc/novnc'],
 };
 
 export default nextConfig;
