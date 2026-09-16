@@ -80,7 +80,7 @@ export function readCompose(): ComposeFile {
   if (!fs.existsSync(COMPOSE_FILE)) {
     return {
       services: {},
-      networks: { envisions: { driver: 'bridge' } },
+      networks: { envisions: { driver: 'bridge', name: 'envisions' } },
     };
   }
   const content = fs.readFileSync(COMPOSE_FILE, 'utf-8');
@@ -233,9 +233,13 @@ export function syncTritonServices(): void {
     ];
   }
 
-  if (!compose.networks) {
-    compose.networks = { envisions: { driver: 'bridge' } };
-  }
+  // Without an explicit `name:`, Compose prefixes the network with the project
+  // name (e.g. "python-counting_envisions"), which never matches the dashboard
+  // compose file's own "envisions" network — the two projects end up on
+  // different bridge networks and can't resolve each other's container names
+  // at all, however correctly everything else is configured.
+  compose.networks = compose.networks || {};
+  compose.networks.envisions = { ...(compose.networks.envisions as object), driver: 'bridge', name: 'envisions' };
   writeCompose(compose);
 }
 
@@ -247,9 +251,11 @@ export function addService(deviceCode: string, hardwareMode: HardwareMode = 'jet
   compose.services[serviceName] = buildServiceDefinition(deviceCode, hardwareMode);
   ensureTritonServices(compose, hardwareMode, tritonImageTag);
 
-  if (!compose.networks) {
-    compose.networks = { envisions: { driver: 'bridge' } };
-  }
+  // See syncTritonServices() — must be an explicit name or Compose prefixes
+  // it per-project, splitting the dashboard and python-counting containers
+  // onto two different networks that can't resolve each other.
+  compose.networks = compose.networks || {};
+  compose.networks.envisions = { ...(compose.networks.envisions as object), driver: 'bridge', name: 'envisions' };
 
   writeCompose(compose);
 }
@@ -266,6 +272,12 @@ export function applyHardwareModeToAll(hardwareMode: HardwareMode, tritonImageTa
     compose.services[serviceName] = buildServiceDefinition(deviceCode, hardwareMode);
   }
   ensureTritonServices(compose, hardwareMode, tritonImageTag);
+
+  // See syncTritonServices() — must be an explicit name or Compose prefixes
+  // it per-project, splitting the dashboard and python-counting containers
+  // onto two different networks that can't resolve each other.
+  compose.networks = compose.networks || {};
+  compose.networks.envisions = { ...(compose.networks.envisions as object), driver: 'bridge', name: 'envisions' };
 
   writeCompose(compose);
 }

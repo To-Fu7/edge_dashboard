@@ -34,3 +34,4 @@ services:
 networks:
   envisions:
     driver: bridge
+    name: envisions
