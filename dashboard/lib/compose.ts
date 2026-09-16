@@ -7,12 +7,12 @@ import type { HardwareMode } from './types';
 
 const execAsync = promisify(exec);
 
-const PYTHON_COUNTING_DIR = process.env.PYTHON_COUNTING_DIR || path.join(process.cwd(), '..', 'python-counting');
+export const PYTHON_COUNTING_DIR = process.env.PYTHON_COUNTING_DIR || path.join(process.cwd(), '..', 'python-counting');
 // When running inside Docker, PYTHON_COUNTING_DIR is a container-internal path (/python-counting).
 // The Docker daemon needs the actual HOST path to resolve relative volume mounts (.:/app).
 // HOST_PYTHON_COUNTING_DIR must be set to the host filesystem path of python-counting/.
-const HOST_PYTHON_COUNTING_DIR = process.env.HOST_PYTHON_COUNTING_DIR || PYTHON_COUNTING_DIR;
-const COMPOSE_FILE = path.join(PYTHON_COUNTING_DIR, 'docker-compose.yml');
+export const HOST_PYTHON_COUNTING_DIR = process.env.HOST_PYTHON_COUNTING_DIR || PYTHON_COUNTING_DIR;
+export const COMPOSE_FILE = path.join(PYTHON_COUNTING_DIR, 'docker-compose.yml');
 
 interface ComposeService {
   image?: string;
@@ -264,15 +264,6 @@ export async function composeUpAll(): Promise<void> {
   );
 }
 
-export async function composeBuild(): Promise<{ stdout: string; stderr: string }> {
-  // Camera services reference a prebuilt image (no build: section), so
-  // `compose build` is a no-op — build the image directly from the dockerfile.
-  return execAsync(
-    `docker build -t python-counting-services-python-1:latest -f dockerfile .`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 600000 }
-  );
-}
-
 export async function composeUpTriton(): Promise<void> {
   const { stderr } = await execAsync(
     `${COMPOSE_CMD} up -d --no-deps ${TRITON_SERVICE_NAME}`,
@@ -293,15 +284,6 @@ export async function composeStopTriton(): Promise<void> {
 export async function composeRestartTriton(): Promise<void> {
   await composeStopTriton();
   await composeUpTriton();
-}
-
-export async function runModelBuilder(force = false): Promise<{ stdout: string; stderr: string }> {
-  const forceEnv = force ? '-e FORCE_BUILD=1 ' : '';
-  // TensorRT engine builds can take minutes per model
-  return execAsync(
-    `${COMPOSE_CMD} --profile build run --rm ${forceEnv}${TRITON_BUILDER_SERVICE_NAME}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 1800000 }
-  );
 }
 
 export async function imageExists(imageName: string): Promise<boolean> {

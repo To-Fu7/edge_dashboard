@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/StatusBadge';
-import { Play, Square, RotateCcw, Camera, AlertCircle, RefreshCw, Layers, HammerIcon, Cpu, MemoryStick, MonitorDot } from 'lucide-react';
+import { Play, Square, RotateCcw, Camera, AlertCircle, RefreshCw, Layers, HammerIcon, Cpu, MemoryStick, MonitorDot, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { ContainerStatus } from '@/lib/types';
@@ -24,31 +24,10 @@ export default function HomePage() {
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
   const [fullRestarting, setFullRestarting] = useState(false);
   const [imageReady, setImageReady] = useState<boolean | null>(null);
-  const [building, setBuilding] = useState(false);
-  const [buildLog, setBuildLog] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/compose/status').then(r => r.json()).then(d => setImageReady(d.imageReady)).catch(() => setImageReady(false));
   }, []);
-
-  async function buildImage() {
-    setBuilding(true);
-    setBuildLog(null);
-    const toastId = toast.loading('Building Docker image... (this may take several minutes)');
-    try {
-      const res = await fetch('/api/compose/build', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setBuildLog(data.stderr || data.stdout || 'Build complete');
-      setImageReady(true);
-      toast.success('Image built successfully!', { id: toastId });
-    } catch (e) {
-      toast.error(`Build failed: ${e}`, { id: toastId });
-      setBuildLog(String(e));
-    } finally {
-      setBuilding(false);
-    }
-  }
 
   async function fullRestart() {
     setFullRestarting(true);
@@ -137,16 +116,14 @@ export default function HomePage() {
               The image <code className="font-mono bg-muted px-1 rounded">python-counting-services-python-1:latest</code> does not exist locally.
               Build it once before starting any cameras.
             </p>
-            {buildLog && (
-              <pre className="text-xs font-mono bg-black/80 text-gray-300 rounded p-2 max-h-32 overflow-auto whitespace-pre-wrap">
-                {buildLog}
-              </pre>
-            )}
           </div>
-          <Button size="sm" onClick={buildImage} disabled={building} className="shrink-0">
-            <HammerIcon className={`w-4 h-4 mr-2 ${building ? 'animate-pulse' : ''}`} />
-            {building ? 'Building...' : 'Build Image'}
-          </Button>
+          <Link href="/inference" className="shrink-0">
+            <Button size="sm">
+              <HammerIcon className="w-4 h-4 mr-2" />
+              Build Image
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </Link>
         </div>
       )}
 
@@ -248,10 +225,12 @@ function TritonStatusCard() {
             {acting === 'restart' ? 'Restarting…' : 'Restart'}
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={() => action('build-engines')} disabled={!!acting}
-          title="Build TensorRT engines for all ONNX models on this device (minutes)">
-          {acting === 'build-engines' ? 'Building…' : 'Build Engines'}
-        </Button>
+        <Link href="/inference">
+          <Button size="sm" variant="outline" title="Export ONNX / build TensorRT engines / build camera image, with live logs">
+            Build & Inference
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        </Link>
       </div>
     </div>
   );
