@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type { HardwareMode } from './types';
+import { readSettings } from './settings';
 
 const execAsync = promisify(exec);
 
@@ -203,6 +204,41 @@ function ensureTritonServices(compose: ComposeFile, hardwareMode: HardwareMode, 
   compose.services[TRITON_BUILDER_SERVICE_NAME] = buildModelBuilderServiceDefinition(hardwareMode, imageTag);
 }
 
+/** Patches just the volume mounts of the existing triton / triton-model-builder
+ *  compose entries to use the resolved HOST_PYTHON_COUNTING_DIR, leaving image/
+ *  runtime/environment untouched. A freshly-cloned repo's committed
+ *  docker-compose.yml ships relative "./tools"/"./models" mounts — the `docker`
+ *  CLI (running inside the dashboard container) resolves those against the
+ *  container's own /python-counting path, not the host path the sibling HOST
+ *  dockerd actually needs to bind-mount from. Deliberately does NOT regenerate
+ *  the whole service (that's ensureTritonServices, used by addService /
+ *  applyHardwareModeToAll from Settings) — doing so here would silently swap
+ *  the image to whatever hardwareMode defaults to (jetson) if settings.json
+ *  doesn't exist yet, which would be wrong on a plain x86/server GPU box that
+ *  never touched the hardware-mode picker. If a service is missing entirely,
+ *  it's created from current settings as a bootstrap (only path this can hit
+ *  is a docker-compose.yml with no triton services at all yet). */
+export function syncTritonServices(): void {
+  const compose = readCompose();
+  compose.services = compose.services || {};
+
+  if (!compose.services[TRITON_SERVICE_NAME] || !compose.services[TRITON_BUILDER_SERVICE_NAME]) {
+    const settings = readSettings();
+    ensureTritonServices(compose, settings.hardwareMode, settings.triton.imageTag);
+  } else {
+    compose.services[TRITON_SERVICE_NAME].volumes = [`${HOST_PYTHON_COUNTING_DIR}/models:/models`];
+    compose.services[TRITON_BUILDER_SERVICE_NAME].volumes = [
+      `${HOST_PYTHON_COUNTING_DIR}/models:/models`,
+      `${HOST_PYTHON_COUNTING_DIR}/tools:/tools:ro`,
+    ];
+  }
+
+  if (!compose.networks) {
+    compose.networks = { envisions: { driver: 'bridge' } };
+  }
+  writeCompose(compose);
+}
+
 export function addService(deviceCode: string, hardwareMode: HardwareMode = 'jetson', tritonImageTag?: string): void {
   const compose = readCompose();
   const serviceName = getServiceName(deviceCode);
@@ -295,6 +331,7 @@ export async function composeUpAll(): Promise<void> {
 }
 
 export async function composeUpTriton(): Promise<void> {
+  syncTritonServices();
   const { stderr } = await execAsync(
     `${COMPOSE_CMD} up -d --no-deps ${TRITON_SERVICE_NAME}`,
     { cwd: PYTHON_COUNTING_DIR, timeout: 300000 } // image pull can take a while
