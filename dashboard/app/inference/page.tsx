@@ -18,7 +18,7 @@ interface TritonStatusData {
 export default function InferencePage() {
   const [weightsList, setWeightsList] = useState<string[]>([]);
   const [weights, setWeights] = useState('');
-  const [imgsz, setImgsz] = useState(640);
+  const [imgsz, setImgsz] = useState('640'); // raw text while editing — parsed only when submitted (see getBody below)
   const [forceRebuild, setForceRebuild] = useState(false);
   const [status, setStatus] = useState<TritonStatusData | null>(null);
 
@@ -76,7 +76,7 @@ export default function InferencePage() {
         runLabel="Export"
         disabled={!weights}
         disabledReason="No .pt weight file found in python-counting/"
-        getBody={() => ({ weights, imgsz })}
+        getBody={() => ({ weights, imgsz: Number(imgsz) || 640 })}
       >
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -90,7 +90,12 @@ export default function InferencePage() {
           </div>
           <div className="space-y-1.5">
             <Label>Image size</Label>
-            <Input type="number" value={imgsz} onChange={e => setImgsz(Number(e.target.value) || 640)} />
+            <Input
+              type="number"
+              value={imgsz}
+              onChange={e => setImgsz(e.target.value)}
+              onBlur={() => setImgsz(String(Number(imgsz) || 640))}
+            />
           </div>
         </div>
       </BuildLogPanel>

@@ -115,7 +115,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const [lines, setLines] = useState<DrawnLine[]>([]);
   const [zones, setZones] = useState<DrawnZone[]>([]);
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
-  const [tritonModels, setTritonModels] = useState<{ name: string; state: string }[]>([]);
+  const [tritonModels, setTritonModels] = useState<{ name: string; state: string; kind?: 'detection' | 'embedding' }[]>([]);
 
   useEffect(() => {
     fetch('/api/triton/models')
@@ -373,6 +373,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                   onChange={v => setField('TRITON_MODEL', v)}
                   placeholder="yolo26m_640 (Triton model repository name)"
                   models={tritonModels}
+                  kind="detection"
                 />
               </FormField>
               <FormField label="Confidence (0.0–1.0)">
@@ -413,6 +414,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('APD_MODEL', v)}
                         placeholder="apd_640"
                         models={tritonModels}
+                        kind="detection"
                       />
                     </FormField>
                     <FormField label="Confidence (0.0–1.0)">
@@ -441,6 +443,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('FIRE_SMOKE_MODEL', v)}
                         placeholder="fire_smoke_640"
                         models={tritonModels}
+                        kind="detection"
                       />
                     </FormField>
                     <FormField label="Confidence (0.0–1.0)">
@@ -475,6 +478,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('FACE_MODEL', v)}
                         placeholder="face_640"
                         models={tritonModels}
+                        kind="detection"
                       />
                     </FormField>
                     <FormField label="Face Embedding Model">
@@ -483,6 +487,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('FACE_EMBED_MODEL', v)}
                         placeholder="arcface_112"
                         models={tritonModels}
+                        kind="embedding"
                       />
                     </FormField>
                     <FormField label="Confidence (0.0–1.0)">

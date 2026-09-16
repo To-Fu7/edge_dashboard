@@ -15,7 +15,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tritonModels, setTritonModels] = useState<{ name: string; state: string }[]>([]);
+  const [tritonModels, setTritonModels] = useState<{ name: string; state: string; kind?: 'detection' | 'embedding' }[]>([]);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -124,6 +124,7 @@ export default function SettingsPage() {
               onChange={v => setTriton('defaultModel', v)}
               placeholder="yolo26m_640"
               models={tritonModels}
+              kind="detection"
             />
             <p className="text-xs text-muted-foreground">
               Model repository name assigned to newly created cameras.
@@ -135,6 +136,7 @@ export default function SettingsPage() {
               onChange={v => setTriton('faceEmbedModel', v)}
               placeholder="arcface_112"
               models={tritonModels}
+              kind="embedding"
             />
             <p className="text-xs text-muted-foreground">
               Used to embed photos on the Face Enrollment page — must match cameras&apos; FACE_EMBED_MODEL,
