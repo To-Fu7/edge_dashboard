@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BuildLogPanel } from '@/components/BuildLogPanel';
+import { LiveLogPanel } from '@/components/LiveLogPanel';
 
 interface TritonStatusData {
   containerStatus: string;
@@ -55,6 +56,12 @@ export default function InferencePage() {
           </span>
         </p>
       </div>
+
+      <LiveLogPanel
+        title="Triton Container Logs"
+        description="Live docker logs -f for triton-inference-server — model load status, inference errors, engine warnings."
+        endpoint="/api/triton/logs"
+      />
 
       <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
         <li>Export ONNX from a .pt weight file (one-time per model, or whenever the weight changes)</li>

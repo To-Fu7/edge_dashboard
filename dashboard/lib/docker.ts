@@ -116,3 +116,38 @@ function parseDockerLogs(buf: Buffer): string[] {
 
   return lines;
 }
+
+/** Opens a live `docker logs -f`-equivalent stream via dockerode (no shell-out).
+ *  Returns the raw Node stream so the caller controls its lifetime (destroy()
+ *  to stop following — dockerode/the engine don't stop on their own). */
+export async function getContainerLogStream(containerName: string, tail: number = 200): Promise<NodeJS.ReadableStream> {
+  const d = getDocker();
+  const container = d.getContainer(containerName);
+  return container.logs({
+    stdout: true,
+    stderr: true,
+    tail,
+    timestamps: true,
+    follow: true,
+  }) as unknown as NodeJS.ReadableStream;
+}
+
+/** Incrementally demuxes Docker's stdcopy-framed log stream (8-byte header per
+ *  frame: 4-byte stream type + 4-byte big-endian payload size) into plain
+ *  text, buffering partial frames that straddle chunk boundaries — the same
+ *  framing parseDockerLogs handles for a single buffered read, but here for
+ *  an open-ended `follow: true` stream instead of one buffer. */
+export function demuxDockerStream(stream: NodeJS.ReadableStream, onText: (text: string) => void): void {
+  let buf = Buffer.alloc(0);
+  stream.on('data', (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      if (buf.length < 8) break;
+      const size = buf.readUInt32BE(4);
+      if (buf.length < 8 + size) break;
+      const payload = buf.subarray(8, 8 + size);
+      buf = buf.subarray(8 + size);
+      if (size > 0) onText(payload.toString('utf-8'));
+    }
+  });
+}
