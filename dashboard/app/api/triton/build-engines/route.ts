@@ -1,4 +1,4 @@
-import { PYTHON_COUNTING_DIR, COMPOSE_FILE, TRITON_BUILDER_SERVICE_NAME } from '@/lib/compose';
+import { PYTHON_COUNTING_DIR, COMPOSE_FILE, TRITON_BUILDER_SERVICE_NAME, checkHostMountConfig } from '@/lib/compose';
 import { streamSteps, streamResponse } from '@/lib/buildStream';
 
 export const dynamic = 'force-dynamic';
@@ -7,6 +7,9 @@ export const dynamic = 'force-dynamic';
 // so the (potentially minutes-long) TensorRT engine build can stream its log
 // instead of the dynamic route's blocking exec + single JSON response.
 export async function POST(request: Request) {
+  const mountError = checkHostMountConfig();
+  if (mountError) return new Response(`error: ${mountError}`, { status: 400 });
+
   let force = false;
   try {
     const body = await request.json();

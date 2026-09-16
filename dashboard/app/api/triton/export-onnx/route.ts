@@ -1,4 +1,4 @@
-import { PYTHON_COUNTING_DIR, HOST_PYTHON_COUNTING_DIR } from '@/lib/compose';
+import { PYTHON_COUNTING_DIR, HOST_PYTHON_COUNTING_DIR, checkHostMountConfig } from '@/lib/compose';
 import { streamSteps, streamResponse } from '@/lib/buildStream';
 
 export const dynamic = 'force-dynamic';
@@ -8,6 +8,9 @@ export const dynamic = 'force-dynamic';
 const SAFE_WEIGHTS_NAME = /^[a-zA-Z0-9._-]+\.pt$/;
 
 export async function POST(request: Request) {
+  const mountError = checkHostMountConfig();
+  if (mountError) return new Response(`error: ${mountError}`, { status: 400 });
+
   let body: { weights?: string; imgsz?: number } = {};
   try {
     body = await request.json();

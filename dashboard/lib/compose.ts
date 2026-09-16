@@ -14,6 +14,36 @@ export const PYTHON_COUNTING_DIR = process.env.PYTHON_COUNTING_DIR || path.join(
 export const HOST_PYTHON_COUNTING_DIR = process.env.HOST_PYTHON_COUNTING_DIR || PYTHON_COUNTING_DIR;
 export const COMPOSE_FILE = path.join(PYTHON_COUNTING_DIR, 'docker-compose.yml');
 
+/** Sanity-checks the host-mount setup before a build spawns `docker` commands
+ *  that bind-mount HOST_PYTHON_COUNTING_DIR into a sibling container (via the
+ *  host's Docker daemon, reached through the mounted docker.sock). Docker
+ *  silently creates an empty directory for a bind-mount source that doesn't
+ *  exist on the host, so a misconfigured/missing HOST_PYTHON_COUNTING_DIR
+ *  doesn't fail until the *sibling* container starts — surfacing as a cryptic
+ *  "file not found" for a script that IS there, just not on the mounted side.
+ *  Returns an actionable error string, or null if the setup looks correct. */
+export function checkHostMountConfig(): string | null {
+  if (!fs.existsSync(path.join(PYTHON_COUNTING_DIR, 'tools', 'build_engine.sh'))) {
+    return (
+      `The dashboard container can't see python-counting/tools/build_engine.sh at ` +
+      `PYTHON_COUNTING_DIR=${PYTHON_COUNTING_DIR}. Check the "../python-counting:/python-counting" ` +
+      `volume in dashboard/docker-compose.yml is actually mounted.`
+    );
+  }
+  if (!process.env.HOST_PYTHON_COUNTING_DIR) {
+    return (
+      `HOST_PYTHON_COUNTING_DIR is not set. The dashboard container can read its own python-counting/ ` +
+      `files fine, but the commands below run via the HOST's Docker daemon (through the mounted ` +
+      `docker.sock), which needs the HOST filesystem path of python-counting/ to resolve -v mounts for ` +
+      `triton-model-builder / yolo-export. Without it, Docker silently bind-mounts an empty directory ` +
+      `and the build fails with "file not found" for scripts that do exist. ` +
+      `Fix: set HOST_PYTHON_COUNTING_DIR=<absolute host path to python-counting/> in dashboard/.env, ` +
+      `then recreate the dashboard container (docker compose up -d --force-recreate dashboard).`
+    );
+  }
+  return null;
+}
+
 interface ComposeService {
   image?: string;
   container_name?: string;
