@@ -360,6 +360,16 @@ FACE_CACHE_REFRESH_MINUTES = float(os.getenv('FACE_CACHE_REFRESH_MINUTES', 10))
 # one (size/sharpness/confidence), instead of embedding whatever frame the
 # track first appeared in. Higher = better selection but longer verdict delay.
 FACE_CAPTURE_FRAMES = int(os.getenv('FACE_CAPTURE_FRAMES', 5))
+# Margin added around the detected face box before embedding (fraction of box
+# size) — ArcFace expects some context, and tracker boxes are often tighter
+# than the training crop. Higher = more context but more background/hair/ears.
+FACE_CROP_MARGIN = float(os.getenv('FACE_CROP_MARGIN', 0.25))
+# Small CCTV face crops are upscaled to at least this many pixels (shortest
+# side) before embedding, so the embedder's own resize starts from a cleanly
+# interpolated image instead of a handful of raw pixels. ArcFace models are
+# trained on 112x112 crops — raising this well above that mostly just costs
+# CPU on the upscale for no accuracy gain.
+FACE_CROP_MIN_SIZE = int(os.getenv('FACE_CROP_MIN_SIZE', 112))
 INSIDER_TAG = os.getenv('INSIDER_TAG', 'info')
 INTRUDER_TAG = os.getenv('INTRUDER_TAG', 'alarm')
 if FACE_ENABLED and not (FACE_MODEL and FACE_EMBED_MODEL):

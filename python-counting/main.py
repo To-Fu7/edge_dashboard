@@ -591,7 +591,8 @@ def main():
 
                     # "Zoom" first: margin-expanded, upscaled crop — small
                     # CCTV faces embedded raw match poorly (see crop_face).
-                    face_crop = crop_face(original_frame, (fx1, fy1, fx2, fy2))
+                    face_crop = crop_face(original_frame, (fx1, fy1, fx2, fy2),
+                                          margin=cfg.FACE_CROP_MARGIN, min_size=cfg.FACE_CROP_MIN_SIZE)
                     if face_crop.size == 0:
                         continue
 

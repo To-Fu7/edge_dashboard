@@ -505,6 +505,24 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                     <FormField label="Cache Refresh (minutes)">
                       <Input type="number" min="1" value={env.FACE_CACHE_REFRESH_MINUTES || '10'} onChange={e => setField('FACE_CACHE_REFRESH_MINUTES', e.target.value)} />
                     </FormField>
+                    <FormField label="Best-Shot Frames">
+                      <Input type="number" min="1" value={env.FACE_CAPTURE_FRAMES || '5'} onChange={e => setField('FACE_CAPTURE_FRAMES', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Sightings buffered per person before embedding the sharpest/best-angled one. Higher = more accurate, slower verdict.
+                      </p>
+                    </FormField>
+                    <FormField label="Crop Margin (fraction of box)">
+                      <Input type="number" step="0.05" min="0" value={env.FACE_CROP_MARGIN || '0.25'} onChange={e => setField('FACE_CROP_MARGIN', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Extra context added around the detected face box before embedding.
+                      </p>
+                    </FormField>
+                    <FormField label="Crop Min Size (px)">
+                      <Input type="number" min="1" value={env.FACE_CROP_MIN_SIZE || '112'} onChange={e => setField('FACE_CROP_MIN_SIZE', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Small crops are upscaled to at least this size (shortest side) before embedding.
+                      </p>
+                    </FormField>
                   </div>
                 )}
               </div>
