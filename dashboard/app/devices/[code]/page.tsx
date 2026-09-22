@@ -21,10 +21,10 @@ import type { DeviceEnvConfig, ContainerStatus } from '@/lib/types';
 
 interface DrawnLine { label: string; p1: { x: number; y: number }; p2: { x: number; y: number } }
 
-function envZonesToDrawn(env: Partial<DeviceEnvConfig>): DrawnZone[] {
+function envZonesToDrawn(env: Partial<DeviceEnvConfig>, prefix = 'zone'): DrawnZone[] {
   const zones: DrawnZone[] = [];
   for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-    const val = env[`zone${letter}`];
+    const val = env[`${prefix}${letter}`];
     if (!val) break;
     try {
       const parsed = JSON.parse(val.replace(/\(/g, '[').replace(/\)/g, ']').replace(/'/g, '"'));
@@ -36,10 +36,10 @@ function envZonesToDrawn(env: Partial<DeviceEnvConfig>): DrawnZone[] {
   return zones;
 }
 
-function drawnZonesToEnv(zones: DrawnZone[]): Record<string, string> {
+function drawnZonesToEnv(zones: DrawnZone[], prefix = 'zone'): Record<string, string> {
   const result: Record<string, string> = {};
   for (const zone of zones) {
-    result[`zone${zone.label}`] = `[${zone.points.map(p => `(${p.x}, ${p.y})`).join(', ')}]`;
+    result[`${prefix}${zone.label}`] = `[${zone.points.map(p => `(${p.x}, ${p.y})`).join(', ')}]`;
   }
   return result;
 }
@@ -114,6 +114,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const logScrollRef = useRef<HTMLDivElement>(null);
   const [lines, setLines] = useState<DrawnLine[]>([]);
   const [zones, setZones] = useState<DrawnZone[]>([]);
+  const [faceZones, setFaceZones] = useState<DrawnZone[]>([]);
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
   const [tritonModels, setTritonModels] = useState<{ name: string; state: string; kind?: 'detection' | 'embedding' }[]>([]);
 
@@ -133,6 +134,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       setStatus(data.status);
       setLines(envLinesToDrawn(data.env));
       setZones(envZonesToDrawn(data.env));
+      setFaceZones(envZonesToDrawn(data.env, 'faceZone'));
       setCropRect(envToCropRect(data.env));
     } catch {
       toast.error('Failed to load device');
@@ -198,14 +200,21 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       // Clear vars for the inactive mode
       const clearLines: Record<string, undefined> = {};
       const clearZones: Record<string, undefined> = {};
+      const clearFaceZones: Record<string, undefined> = {};
       for (const letter of 'ACEGIKMOQSUWY') clearLines[`line${letter}`] = undefined;
-      for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') clearZones[`zone${letter}`] = undefined;
+      for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+        clearZones[`zone${letter}`] = undefined;
+        clearFaceZones[`faceZone${letter}`] = undefined;
+      }
 
       const cropEnv = { CROP_AREA: cropRect ? cropRectToEnv(cropRect) : '' };
+      // Face restriction zone is independent of the person-counting DETECTION_MODE
+      // (line vs zone) — always saved, never cleared by the mode switch above.
+      const faceZoneEnv = { ...clearFaceZones, ...drawnZonesToEnv(faceZones, 'faceZone') };
 
       const payload = mode === 'line_crossing'
-        ? { ...env, ...cropEnv, ...clearZones, ...clearLines, ...drawnLinesToEnv(lines) }
-        : { ...env, ...cropEnv, ...clearLines, ...clearZones, ...drawnZonesToEnv(zones) };
+        ? { ...env, ...cropEnv, ...clearZones, ...clearLines, ...drawnLinesToEnv(lines), ...faceZoneEnv }
+        : { ...env, ...cropEnv, ...clearLines, ...clearZones, ...drawnZonesToEnv(zones), ...faceZoneEnv };
 
       const res = await fetch(`/api/devices/${code}`, {
         method: 'PUT',
@@ -277,6 +286,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
         <TabsList>
           <TabsTrigger value="basic">Basic Settings</TabsTrigger>
           <TabsTrigger value="lines">Line Configuration</TabsTrigger>
+          <TabsTrigger value="face-zone">Face Zone</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
@@ -631,6 +641,28 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
               />
             </Section>
           )}
+
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Settings'}
+            </Button>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="face-zone" className="space-y-6 pt-4">
+          <Section title="Face Restriction Zone">
+            <p className="text-xs text-muted-foreground -mt-2 mb-2">
+              Optional — like Hikvision&apos;s capture-region setting, only faces whose
+              center falls inside a drawn zone are processed. Leave empty to run
+              face detection across the whole (cropped) frame.
+            </p>
+            <ZoneDrawer
+              deviceCode={code}
+              resolution={parseResolution(env.SCREEN_RESOLUTION)}
+              initialZones={faceZones}
+              onChange={setFaceZones}
+            />
+          </Section>
 
           <div className="flex justify-end">
             <Button onClick={handleSave} disabled={saving}>
