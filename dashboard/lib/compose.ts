@@ -149,7 +149,12 @@ export function buildTritonServiceDefinition(
     image: tritonImageForMode(hardwareMode, imageTag),
     container_name: TRITON_CONTAINER_NAME,
     restart: 'unless-stopped',
-    command: 'tritonserver --model-repository=/models --strict-model-config=false',
+    // --exit-on-error=false: a single model failing to load (e.g. a config.pbtxt
+    // committed ahead of its model.onnx/model.plan — a real, easy-to-hit state in
+    // an incrementally-populated repo) must not take down every OTHER model that
+    // loaded fine. Without this, Triton's default exit-on-any-failure behavior
+    // means one missing weight file kills the whole inference stack.
+    command: 'tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false',
     shm_size: '1gb',
     ports: ['8000:8000', '8001:8001', '8002:8002'],
     volumes: [`${HOST_PYTHON_COUNTING_DIR}/models:/models`],
@@ -227,6 +232,11 @@ export function syncTritonServices(): void {
     ensureTritonServices(compose, settings.hardwareMode, settings.triton.imageTag);
   } else {
     compose.services[TRITON_SERVICE_NAME].volumes = [`${HOST_PYTHON_COUNTING_DIR}/models:/models`];
+    // command is mode-independent (unlike image/runtime), so safe to always
+    // refresh here — an existing compose.yml predating --exit-on-error=false
+    // would otherwise never pick it up short of a full ensureTritonServices()
+    // regen (which this branch deliberately avoids, see the comment above).
+    compose.services[TRITON_SERVICE_NAME].command = buildTritonServiceDefinition('server').command;
     compose.services[TRITON_BUILDER_SERVICE_NAME].volumes = [
       `${HOST_PYTHON_COUNTING_DIR}/models:/models`,
       `${HOST_PYTHON_COUNTING_DIR}/tools:/tools:ro`,
