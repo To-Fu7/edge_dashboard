@@ -370,6 +370,15 @@ FACE_CROP_MARGIN = float(os.getenv('FACE_CROP_MARGIN', 0.25))
 # trained on 112x112 crops — raising this well above that mostly just costs
 # CPU on the upscale for no accuracy gain.
 FACE_CROP_MIN_SIZE = int(os.getenv('FACE_CROP_MIN_SIZE', 112))
+# Detected-face size gate (shortest side of the raw detector box, before the
+# crop_face margin/upscale) — same idea as Hikvision's "Min./Max. Pixel"
+# capture-distance setting on a 2D camera with no depth sensor: face size in
+# pixels IS the distance proxy. Below FACE_MIN_SIZE the face is too far/small
+# to embed reliably; above FACE_MAX_SIZE (0 = unlimited) it's implausibly
+# close/large for this camera's framing and more likely a false positive than
+# a genuine close-up.
+FACE_MIN_SIZE = int(os.getenv('FACE_MIN_SIZE', 40))
+FACE_MAX_SIZE = int(os.getenv('FACE_MAX_SIZE', 0))
 INSIDER_TAG = os.getenv('INSIDER_TAG', 'info')
 INTRUDER_TAG = os.getenv('INTRUDER_TAG', 'alarm')
 if FACE_ENABLED and not (FACE_MODEL and FACE_EMBED_MODEL):

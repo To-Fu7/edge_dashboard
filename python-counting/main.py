@@ -586,6 +586,11 @@ def main():
                     fy1 += cfg.CROP_Y1
                     fx2 += cfg.CROP_X1
                     fy2 += cfg.CROP_Y1
+                    face_size = min(fx2 - fx1, fy2 - fy1)
+                    if face_size < cfg.FACE_MIN_SIZE:
+                        continue  # too far/small to embed reliably
+                    if cfg.FACE_MAX_SIZE > 0 and face_size > cfg.FACE_MAX_SIZE:
+                        continue  # implausibly close/large for this camera's framing
                     if not _center_in_any_zone((fx1 + fx2) // 2, (fy1 + fy2) // 2, cfg.FACE_EFFECTIVE_ZONES):
                         continue  # outside the Face restriction zone
 

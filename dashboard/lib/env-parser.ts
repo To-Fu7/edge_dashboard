@@ -126,6 +126,11 @@ export function writeDeviceEnv(deviceCode: string, config: Partial<DeviceEnvConf
     `FACE_CONFIDENCE=${config.FACE_CONFIDENCE ?? '0.5'}`,
     `FACE_MATCH_THRESHOLD=${config.FACE_MATCH_THRESHOLD ?? '0.5'}`,
     `FACE_CACHE_REFRESH_MINUTES=${config.FACE_CACHE_REFRESH_MINUTES ?? '10'}`,
+    `FACE_CAPTURE_FRAMES=${config.FACE_CAPTURE_FRAMES ?? '5'}`,
+    `FACE_CROP_MARGIN=${config.FACE_CROP_MARGIN ?? '0.25'}`,
+    `FACE_CROP_MIN_SIZE=${config.FACE_CROP_MIN_SIZE ?? '112'}`,
+    `FACE_MIN_SIZE=${config.FACE_MIN_SIZE ?? '40'}`,
+    `FACE_MAX_SIZE=${config.FACE_MAX_SIZE ?? '0'}`,
     `INSIDER_TAG=${config.INSIDER_TAG ?? 'info'}`,
     `INTRUDER_TAG=${config.INTRUDER_TAG ?? 'alarm'}`,
     '',
@@ -159,6 +164,19 @@ export function writeDeviceEnv(deviceCode: string, config: Partial<DeviceEnvConf
     lines.push('');
     lines.push('# ZONES');
     for (const key of zoneKeys) {
+      if (config[key]) lines.push(`${key}=${config[key]}`);
+    }
+  }
+
+  // Write faceZone* keys (faceZoneA, faceZoneB, ...) — independent of the
+  // person-counting zone*/line* keys above, so always written when present.
+  const faceZoneKeys = Object.keys(config)
+    .filter(k => /^faceZone[A-Z]$/.test(k))
+    .sort();
+  if (faceZoneKeys.length > 0) {
+    lines.push('');
+    lines.push('# FACE ZONE');
+    for (const key of faceZoneKeys) {
       if (config[key]) lines.push(`${key}=${config[key]}`);
     }
   }

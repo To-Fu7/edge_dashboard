@@ -533,6 +533,18 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         Small crops are upscaled to at least this size (shortest side) before embedding.
                       </p>
                     </FormField>
+                    <FormField label="Min. Detection Size (px)">
+                      <Input type="number" min="0" value={env.FACE_MIN_SIZE || '40'} onChange={e => setField('FACE_MIN_SIZE', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Hikvision-style capture distance limit: faces smaller than this (too far away) are ignored entirely.
+                      </p>
+                    </FormField>
+                    <FormField label="Max. Detection Size (px)">
+                      <Input type="number" min="0" value={env.FACE_MAX_SIZE || '0'} onChange={e => setField('FACE_MAX_SIZE', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Faces larger than this (too close to the camera) are ignored. 0 = no upper limit.
+                      </p>
+                    </FormField>
                   </div>
                 )}
               </div>
