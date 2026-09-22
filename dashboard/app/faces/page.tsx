@@ -94,10 +94,12 @@ export default function FacesPage() {
       <div className="rounded-lg border border-border p-5 space-y-4">
         <h2 className="text-sm font-medium">Enroll a new person</h2>
         <p className="text-xs text-muted-foreground">
-          Upload one clear photo of a face — the server automatically generates augmented
-          variants (flip, contrast, skew) and embeds each one, so matching at runtime is more
-          robust to lighting and angle than a single photo would be. People not enrolled here
-          are classified as &quot;intruder&quot; by any camera with Face Detection enabled.
+          Upload one clear photo of a face — the server automatically generates 11 augmented
+          variants (flip, contrast, brightness, rotation, grayscale, blur, skew) and embeds
+          each one, so matching at runtime is more robust to CCTV conditions — night/IR mode,
+          camera tilt, motion blur, off-angle viewing — than a single clean photo would be.
+          People not enrolled here are classified as &quot;intruder&quot; by any camera with
+          Face Detection enabled.
         </p>
         <form onSubmit={handleSubmit} className="flex items-end gap-3 flex-wrap">
           <div className="space-y-1.5">
