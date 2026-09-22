@@ -29,6 +29,7 @@ export interface DeviceEnvConfig {
   APD_MODEL?: string;
   APD_CONFIDENCE?: string;
   APD_TAG?: string;               // 'info' | 'alarm'
+  APD_VIOLATION_CLASSES?: string; // comma-separated class names; empty = every detected class is a violation
   FIRE_SMOKE_ENABLED?: string;
   FIRE_SMOKE_MODEL?: string;
   FIRE_SMOKE_CONFIDENCE?: string;

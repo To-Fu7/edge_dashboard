@@ -529,12 +529,14 @@ def main():
                     if draw_now:
                         draw_track(frame, track_id, x1, y1, x2, y2, geom)
 
-                # Process APD violations (per-track dedup; draws an orange box)
+                # Process APD violations (per-track dedup; draws a red alarm box)
                 for trk in apd_tracks:
                     track_id = int(trk[4])
                     conf = float(trk[5])
                     class_id = int(trk[6])
                     label = apd_classes.get(class_id, f'class_{class_id}')
+                    if cfg.APD_VIOLATION_CLASSES and label not in cfg.APD_VIOLATION_CLASSES:
+                        continue  # detected, but not a checked violation class (e.g. a compliant "helmet")
                     ax1, ay1, ax2, ay2 = (int(v) for v in trk[:4])
                     ax1 += cfg.CROP_X1
                     ay1 += cfg.CROP_Y1
@@ -543,9 +545,9 @@ def main():
                     if not _center_in_any_zone((ax1 + ax2) // 2, (ay1 + ay2) // 2, cfg.APD_EFFECTIVE_ZONES):
                         continue  # outside the APD restriction zone — not a violation here
                     if draw_now:
-                        cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 165, 255), 2)
+                        cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 0, 255), 2)
                         cv2.putText(frame, label, (ax1, max(0, ay1 - 6)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     apd.process_detection(track_id, label, conf, (ax1, ay1, ax2, ay2), original_frame)
 
                 # Bound apd_alerted_tracks: ByteTrack ids are monotonic within a run,

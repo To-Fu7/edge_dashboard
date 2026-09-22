@@ -114,6 +114,7 @@ export function writeDeviceEnv(deviceCode: string, config: Partial<DeviceEnvConf
     `APD_MODEL=${config.APD_MODEL ?? ''}`,
     `APD_CONFIDENCE=${config.APD_CONFIDENCE ?? '0.3'}`,
     `APD_TAG=${config.APD_TAG ?? 'alarm'}`,
+    `APD_VIOLATION_CLASSES=${config.APD_VIOLATION_CLASSES ?? ''}`,
     `FIRE_SMOKE_ENABLED=${config.FIRE_SMOKE_ENABLED ?? 'false'}`,
     `FIRE_SMOKE_MODEL=${config.FIRE_SMOKE_MODEL ?? ''}`,
     `FIRE_SMOKE_CONFIDENCE=${config.FIRE_SMOKE_CONFIDENCE ?? '0.3'}`,

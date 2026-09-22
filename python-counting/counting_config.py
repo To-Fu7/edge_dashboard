@@ -336,6 +336,13 @@ APD_ENABLED = os.getenv('APD_ENABLED', 'false').lower() == 'true'
 APD_MODEL = os.getenv('APD_MODEL', '')
 APD_CONFIDENCE = float(os.getenv('APD_CONFIDENCE', 0.3))
 APD_TAG = os.getenv('APD_TAG', 'alarm')
+# Which of the model's own class names count as a violation — e.g. a model
+# trained on both "helmet" (compliant) and "no-helmet" (violation) shouldn't
+# alarm on every detected class, only the violation ones. Comma-separated
+# class names, matched against metadata.json (dashboard reads/writes this as
+# a checklist built from the same file). Empty = every detected class is a
+# violation (the original, backward-compatible behavior).
+APD_VIOLATION_CLASSES = [c.strip() for c in os.getenv('APD_VIOLATION_CLASSES', '').split(',') if c.strip()]
 if APD_ENABLED and not APD_MODEL:
     logging.warning("APD_ENABLED=true but APD_MODEL is not set — APD detection will be disabled")
     APD_ENABLED = False

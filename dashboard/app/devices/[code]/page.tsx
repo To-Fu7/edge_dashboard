@@ -116,7 +116,12 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const [zones, setZones] = useState<DrawnZone[]>([]);
   const [faceZones, setFaceZones] = useState<DrawnZone[]>([]);
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
-  const [tritonModels, setTritonModels] = useState<{ name: string; state: string; kind?: 'detection' | 'embedding' }[]>([]);
+  const [tritonModels, setTritonModels] = useState<{
+    name: string;
+    state: string;
+    kind?: 'detection' | 'embedding';
+    metadata?: { classes?: Record<string, string> };
+  }[]>([]);
 
   useEffect(() => {
     fetch('/api/triton/models')
@@ -181,6 +186,27 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
 
   function setField(key: string, value: string) {
     setEnv(prev => ({ ...prev, [key]: value }));
+  }
+
+  // Class names the selected APD model can actually output (from its own
+  // metadata.json, same source main.py's apd_classes resolves labels from) —
+  // ordered by class id so the checklist matches the model's own numbering.
+  const apdModel = tritonModels.find(m => m.name === env.APD_MODEL);
+  const apdModelClasses = apdModel?.metadata?.classes
+    ? Object.entries(apdModel.metadata.classes).sort(([a], [b]) => Number(a) - Number(b)).map(([, name]) => name)
+    : [];
+  // Unset APD_VIOLATION_CLASSES = every detected class counts as a violation
+  // (the original behavior) — shown here as "everything checked" so the
+  // checklist visually matches what's actually happening until the user
+  // unchecks something they don't want treated as an alarm.
+  const apdViolationSet = env.APD_VIOLATION_CLASSES
+    ? new Set(env.APD_VIOLATION_CLASSES.split(',').map(s => s.trim()).filter(Boolean))
+    : new Set(apdModelClasses);
+
+  function toggleApdViolationClass(name: string) {
+    const next = new Set(apdViolationSet);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setField('APD_VIOLATION_CLASSES', Array.from(next).join(','));
   }
 
   async function handleSave() {
@@ -432,6 +458,34 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                     </FormField>
                     <FormField label="Tag">
                       <TagSelect value={env.APD_TAG || 'alarm'} onChange={v => setField('APD_TAG', v)} />
+                    </FormField>
+                    <FormField label="Violation Classes" className="col-span-2">
+                      {apdModelClasses.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {env.APD_MODEL
+                            ? 'No classes found in this model’s metadata.json — every detected class will be treated as a violation.'
+                            : 'Select a model above to list its classes.'}
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border border-border p-3">
+                          {apdModelClasses.map(name => (
+                            <label key={name} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={apdViolationSet.has(name)}
+                                onChange={() => toggleApdViolationClass(name)}
+                                className="rounded border-border accent-primary"
+                              />
+                              {name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        Only checked classes get a red alarm box and trigger a violation event
+                        (e.g. uncheck a compliant class like &quot;helmet&quot;, keep &quot;no-helmet&quot; checked).
+                        Everything is checked by default until you uncheck something.
+                      </p>
                     </FormField>
                   </div>
                 )}
@@ -738,9 +792,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function FormField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function FormField({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="space-y-1.5">
+    <div className={`space-y-1.5 ${className || ''}`}>
       <Label>{label}</Label>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {children}
