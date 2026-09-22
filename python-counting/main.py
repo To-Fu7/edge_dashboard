@@ -31,6 +31,7 @@ from detection import apd, face, firesmoke
 from inference import TritonEmbedClient, TritonUnavailableError, TritonYoloClient
 from inference.model_metadata import load_model_classes
 from outputs import bbox_writer, db_worker, face_db, mjpeg_server, mqtt_out
+from outputs.image_utils import crop_face
 from tracking import BYTETracker, BYTETrackerArgs, Detections
 
 TRITON_BACKOFF_MIN_S = 1.0
@@ -212,12 +213,27 @@ def reset_apd_state(apd_tracker):
     state.apd_unique_this_hour.clear()
 
 
+def _center_in_any_zone(cx, cy, zones):
+    """zones: list of {'polygon': np.ndarray} (counting_config.load_zones_from_env
+    shape). Empty list means unrestricted — every detector falls back to this
+    when it has no zone of its own and none is inherited (see
+    counting_config.APD_EFFECTIVE_ZONES / FACE_EFFECTIVE_ZONES)."""
+    if not zones:
+        return True
+    for z in zones:
+        if cv2.pointPolygonTest(z['polygon'], (float(cx), float(cy)), False) >= 0:
+            return True
+    return False
+
+
 def reset_face_state(face_tracker):
-    """Tracker reset and dedup-state clear must always happen together — a
-    reset tracker reuses track ids, so a stale entry would suppress a fresh
-    verdict for what is actually a new, unclassified person."""
+    """Tracker reset and dedup/best-shot state clear must always happen
+    together — a reset tracker reuses track ids, so stale entries would
+    either suppress a fresh verdict or mix best-shot candidates from an
+    unrelated earlier person into a recycled id's selection."""
     face_tracker.reset()
     state.face_alerted_tracks.clear()
+    state.face_candidates.clear()
 
 
 def reset_tracking_state(tracker, apd_tracker=None, face_tracker=None):
@@ -274,7 +290,7 @@ def main():
         else:
             logging.info("DEBUG_MODE: Continuing without database initialization")
 
-    logging.info(f"RESOLUTION = {cfg.resolution[0], cfg.resolution[1]}")
+    logging.info(f"RESOLUTION = {'auto (camera native)' if cfg.AUTO_RESOLUTION else (cfg.resolution[0], cfg.resolution[1])}")
     logging.info(f"MQTT interval: {cfg.MQTT_INTERVAL_MINUTES} minutes")
     logging.info(f"Daily MQTT send time: {cfg.DAILY_SEND_TIME}")
     logging.info(f"Triton: {cfg.TRITON_URL} model={cfg.TRITON_MODEL} conf={cfg.YOLO_CONFIDENCE}")
@@ -373,8 +389,12 @@ def main():
                     logging.error(f"Failed to read frame from video source: {video_source}")
                     raise Exception(f"Frame read error or video source disconnected: {video_source}")
 
-                # Screen Resolution
-                frame = cv2.resize(frame, (cfg.resolution[0], cfg.resolution[1]))
+                # Screen Resolution — skipped entirely when SCREEN_RESOLUTION=auto,
+                # so detection runs at the camera's native resolution (preserves
+                # pixel density for e.g. face detection on 2K/4K sources).
+                if not cfg.AUTO_RESOLUTION:
+                    frame = cv2.resize(frame, (cfg.resolution[0], cfg.resolution[1]))
+                state.actual_resolution = (frame.shape[1], frame.shape[0])
 
                 # Crop frame to user-defined detection area before inference
                 detection_frame = frame[cfg.CROP_Y1:cfg.CROP_Y2, cfg.CROP_X1:cfg.CROP_X2]
@@ -520,6 +540,8 @@ def main():
                     ay1 += cfg.CROP_Y1
                     ax2 += cfg.CROP_X1
                     ay2 += cfg.CROP_Y1
+                    if not _center_in_any_zone((ax1 + ax2) // 2, (ay1 + ay2) // 2, cfg.APD_EFFECTIVE_ZONES):
+                        continue  # outside the APD restriction zone — not a violation here
                     if draw_now:
                         cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 165, 255), 2)
                         cv2.putText(frame, label, (ax1, max(0, ay1 - 6)),
@@ -552,21 +574,42 @@ def main():
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                         firesmoke.process_detection(label, conf, frame)
 
-                # Process Face detections (per-track dedup; crop -> embed -> match -> verdict)
+                # Process Face detections: buffer a few sightings per track and embed
+                # only the highest-quality one (best-shot), not whichever frame the
+                # track first appeared in — see detection.face module docstring.
                 for trk in face_tracks:
                     track_id = int(trk[4])
                     if track_id in state.face_alerted_tracks:
-                        continue  # skip embedding/matching work for already-verdicted tracks
+                        continue  # skip scoring/embedding work for already-verdicted tracks
                     fx1, fy1, fx2, fy2 = (int(v) for v in trk[:4])
                     fx1 += cfg.CROP_X1
                     fy1 += cfg.CROP_Y1
                     fx2 += cfg.CROP_X1
                     fy2 += cfg.CROP_Y1
+                    if not _center_in_any_zone((fx1 + fx2) // 2, (fy1 + fy2) // 2, cfg.FACE_EFFECTIVE_ZONES):
+                        continue  # outside the Face restriction zone
+
+                    # "Zoom" first: margin-expanded, upscaled crop — small
+                    # CCTV faces embedded raw match poorly (see crop_face).
+                    face_crop = crop_face(original_frame, (fx1, fy1, fx2, fy2))
+                    if face_crop.size == 0:
+                        continue
+
+                    conf = float(trk[5])
+                    quality = face.compute_quality_score(face_crop, fx2 - fx1, fy2 - fy1, conf)
+                    best = face.collect_best_shot(
+                        state.face_candidates[track_id], quality, face_crop, (fx1, fy1, fx2, fy2),
+                        cfg.FACE_CAPTURE_FRAMES,
+                    )
+                    if best is None:
+                        if draw_now:  # still gathering — neutral "scanning" box, no verdict yet
+                            cv2.rectangle(frame, (fx1, fy1), (fx2, fy2), (180, 180, 180), 1)
+                        continue
+                    state.face_candidates.pop(track_id, None)
+                    _, best_crop, _ = best
+
                     try:
-                        face_crop = original_frame[max(0, fy1):fy2, max(0, fx1):fx2]
-                        if face_crop.size == 0:
-                            continue
-                        embedding = face_embed_client.infer(face_crop)
+                        embedding = face_embed_client.infer(best_crop)
                         name, similarity = face_db.match(embedding)
                         label = name if name else 'intruder'
                         tag = cfg.INSIDER_TAG if name else cfg.INTRUDER_TAG
@@ -578,13 +621,16 @@ def main():
                         cv2.rectangle(frame, (fx1, fy1), (fx2, fy2), color, 2)
                         cv2.putText(frame, label, (fx1, max(0, fy1 - 6)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                    face.process_detection(track_id, label, tag, similarity, (fx1, fy1, fx2, fy2), original_frame)
+                    face.process_detection(track_id, label, tag, similarity, best_crop)
 
-                # Bound face_alerted_tracks: ByteTrack ids are monotonic within a run,
-                # so the smallest keys always belong to long-dead tracks.
+                # Bound face_alerted_tracks/face_candidates: ByteTrack ids are monotonic
+                # within a run, so the smallest keys always belong to long-dead tracks.
                 if len(state.face_alerted_tracks) > FACE_ALERTED_TRACKS_MAX:
                     for stale_id in sorted(state.face_alerted_tracks)[:FACE_ALERTED_TRACKS_MAX // 2]:
                         state.face_alerted_tracks.discard(stale_id)
+                if len(state.face_candidates) > FACE_ALERTED_TRACKS_MAX:
+                    for stale_id in sorted(state.face_candidates)[:FACE_ALERTED_TRACKS_MAX // 2]:
+                        del state.face_candidates[stale_id]
 
                 # bbox overlay file for the dashboard
                 bbox_writer.write_bbox_file()
