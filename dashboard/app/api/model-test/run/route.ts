@@ -1,11 +1,11 @@
 import { HOST_PYTHON_COUNTING_DIR, PYTHON_COUNTING_DIR, imageExists, checkHostMountConfig } from '@/lib/compose';
 import { streamSteps } from '@/lib/buildStream';
+import { CAMERA_IMAGE, RUNNER_NAME, STREAM_PORT } from '@/lib/modelTest';
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 export const dynamic = 'force-dynamic';
-
-const CAMERA_IMAGE = 'python-counting-services-python-1:latest';
 
 // Only a bare filename, no path separators — this becomes a docker run arg
 // and a container-internal /app/test-videos/<name> path.
@@ -50,8 +50,14 @@ export async function POST(request: Request) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const outputFile = `modeltest_${stamp}.mp4`;
 
+  // Best-effort: clear a leftover container from a previous run that crashed
+  // or was killed without --rm cleaning up (e.g. dashboard restarted mid-test)
+  // — `docker run --name` fails outright on a name collision otherwise.
+  try { execSync(`docker rm -f ${RUNNER_NAME}`, { stdio: 'ignore' }); } catch { /* nothing to remove */ }
+
   const args = [
     'run', '--rm',
+    '--name', RUNNER_NAME,
     '--network', 'envisions',
     '-v', `${HOST_PYTHON_COUNTING_DIR}:/app`,
     '-w', '/app',
@@ -63,6 +69,7 @@ export async function POST(request: Request) {
     '--conf', String(conf),
     '--tag', 'modeltest',
     '--out', `/app/recordings/${outputFile}`,
+    '--stream-port', String(STREAM_PORT),
   ];
   if (body.resolution) args.push('--resolution', body.resolution);
   if (body.crop) args.push('--crop', body.crop);

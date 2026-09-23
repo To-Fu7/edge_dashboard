@@ -37,8 +37,11 @@ export default function ModelTestPage() {
   const [log, setLog] = useState('');
   const [outputFile, setOutputFile] = useState<string | null>(null);
   const [videoKey, setVideoKey] = useState(0); // bump to force <video> to reload the new file
+  const [streamKey, setStreamKey] = useState(0); // bump to retry the live <img> preview
+  const [streamReady, setStreamReady] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function loadVideos() {
     fetch('/api/model-test/videos')
@@ -66,11 +69,18 @@ export default function ModelTestPage() {
     });
   }
 
+  function retryStream() {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = setTimeout(() => setStreamKey(k => k + 1), 1000);
+  }
+
   async function run() {
     if (!video || !model || running) return;
     setRunning(true);
     setLog('');
     setOutputFile(null);
+    setStreamReady(false);
+    setStreamKey(k => k + 1); // fresh <img> load for this run, not a cached broken one
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -109,12 +119,15 @@ export default function ModelTestPage() {
     } finally {
       setRunning(false);
       abortRef.current = null;
+      if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
     }
   }
 
   function stop() {
     abortRef.current?.abort();
   }
+
+  useEffect(() => () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); }, []);
 
   const detectionModels = models.filter(m => m.kind !== 'embedding');
 
@@ -181,6 +194,31 @@ export default function ModelTestPage() {
           )}
         </div>
       </div>
+
+      {running && (
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <p className="text-sm font-medium">Live Preview</p>
+          </div>
+          <div className="relative rounded-md bg-black overflow-hidden aspect-video">
+            {/* eslint-disable-next-line @next/next/no-img-element -- multipart/x-mixed-replace stream, next/image can't handle this */}
+            <img
+              key={streamKey}
+              src={`/api/model-test/stream?t=${streamKey}`}
+              alt="Live annotated preview"
+              className="w-full h-full object-contain"
+              onLoad={() => setStreamReady(true)}
+              onError={() => { setStreamReady(false); retryStream(); }}
+            />
+            {!streamReady && (
+              <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                connecting to preview…
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {log && (
         <div className="rounded-lg border border-border bg-card p-4 space-y-2">
