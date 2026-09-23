@@ -1,20 +1,27 @@
-"""Standalone per-camera recording tool for detection QA.
+"""Standalone per-camera / per-video recording tool for detection QA.
 
-Connects to one RTSP stream, runs the SAME Triton YOLO inference path used by
-the production counting service (so results are directly comparable to what's
-running live), draws boxes + confidence + a live FPS/detection overlay, and
-records the annotated feed to an mp4. Use it to check a single camera in
-isolation — distance/angle causing missed detections vs. genuine GPU/model
-instability — without touching the live counting containers.
+Connects to one RTSP stream OR a local video file, runs the SAME Triton YOLO
+inference path used by the production counting service (so results are
+directly comparable to what's running live), optionally applies the same
+resize(SCREEN_RESOLUTION) -> crop(CROP_AREA) preprocessing main.py does,
+draws boxes + confidence + a live FPS/detection overlay, and records the
+annotated feed to an mp4. Use it to check a camera or a saved test clip in
+isolation — distance/angle/resolution causing missed detections vs. genuine
+GPU/model instability — without touching the live counting containers, and
+without live-camera noise (network jitter, other cameras' GPU contention)
+muddying whether a low FPS / low detection rate is the model's fault.
 
 Usage:
-    # Load RTSP_URL / TRITON_URL / TRITON_MODEL / YOLO_CONFIDENCE from an
-    # existing device .env file (same convention as main.py):
+    # Load RTSP_URL / TRITON_URL / TRITON_MODEL / YOLO_CONFIDENCE (and
+    # SCREEN_RESOLUTION / CROP_AREA, applied automatically) from an existing
+    # device .env file (same convention as main.py):
     python tools/record_camera_test.py --device S21 --seconds 120
 
-    # Or point at any RTSP/file source directly:
-    python tools/record_camera_test.py --rtsp rtsp://user:pass@host/stream \\
-        --triton-url triton:8001 --model yolo26m_640 --conf 0.3 --seconds 120
+    # Test a saved mp4 against a specific model, matching a device's
+    # preprocessing exactly (this is what the dashboard's Model Test page runs):
+    python tools/record_camera_test.py --rtsp test-videos/lobby.mp4 \\
+        --triton-url triton:8001 --model yolo26m_640 --conf 0.3 \\
+        --resolution 800,600 --crop 38,11,770,440
 
 Output: ./recordings/<device-or-tag>_<timestamp>.mp4 (annotated) next to a
 .log with per-second detection-count stats, unless --out overrides it.
@@ -36,6 +43,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from inference import TritonUnavailableError, TritonYoloClient  # noqa: E402
 
 
+def parse_resolution(raw: str | None) -> tuple[int, int] | None:
+    if not raw:
+        return None
+    w, h = raw.split(',')
+    return int(w), int(h)
+
+
+def parse_crop(raw: str | None) -> tuple[int, int, int, int] | None:
+    if not raw:
+        return None
+    x1, y1, x2, y2 = raw.split(',')
+    return int(x1), int(y1), int(x2), int(y2)
+
+
 def load_env_file(path: Path) -> dict[str, str]:
     env: dict[str, str] = {}
     for line in path.read_text().splitlines():
@@ -50,8 +71,14 @@ def load_env_file(path: Path) -> dict[str, str]:
     return env
 
 
-def resolve_config(args: argparse.Namespace) -> tuple[str, str, str, float, str]:
-    """Returns (rtsp_url, triton_url, model_name, conf_thresh, tag)."""
+def resolve_config(args: argparse.Namespace):
+    """Returns (rtsp_url, triton_url, model_name, conf_thresh, tag, resolution, crop).
+    resolution/crop are (w,h) / (x1,y1,x2,y2) or None (no resize/crop applied)."""
+    import ast
+
+    resolution = parse_resolution(args.resolution)
+    crop = parse_crop(args.crop)
+
     if args.device:
         env_path = Path(__file__).resolve().parent.parent / f'.env_{args.device}'
         if not env_path.exists():
@@ -62,6 +89,22 @@ def resolve_config(args: argparse.Namespace) -> tuple[str, str, str, float, str]
         model_name = args.model or env.get('TRITON_MODEL') or _derive_model(env.get('YOLO_MODEL', 'yolo26m.pt'))
         conf = args.conf if args.conf is not None else float(env.get('YOLO_CONFIDENCE', 0.3))
         tag = args.device
+        # Mirror main.py's preprocessing unless explicitly overridden on the CLI —
+        # a device's SCREEN_RESOLUTION/CROP_AREA directly affects detection rate
+        # (shrinks pixel density before the model ever sees the frame), so testing
+        # without them isn't actually "the same conditions as main.py".
+        if resolution is None and env.get('SCREEN_RESOLUTION', '').strip().lower() not in ('', 'auto'):
+            try:
+                w, h = ast.literal_eval(env['SCREEN_RESOLUTION'])
+                resolution = (int(w), int(h))
+            except Exception:
+                pass
+        if crop is None and env.get('CROP_AREA', '').strip():
+            try:
+                (x1, y1), (x2, y2) = ast.literal_eval(env['CROP_AREA'])
+                crop = (int(x1), int(y1), int(x2), int(y2))
+            except Exception:
+                pass
     else:
         if not args.rtsp:
             sys.exit("error: pass --device CODE or --rtsp URL")
@@ -73,7 +116,7 @@ def resolve_config(args: argparse.Namespace) -> tuple[str, str, str, float, str]
 
     if not rtsp_url:
         sys.exit("error: no RTSP_URL resolved (empty in env file and no --rtsp given)")
-    return rtsp_url, triton_url, model_name, conf, tag
+    return rtsp_url, triton_url, model_name, conf, tag, resolution, crop
 
 
 def _derive_model(yolo_model: str) -> str:
@@ -89,24 +132,37 @@ def main():
     ap.add_argument('--model', help='Triton model repository name, default yolo26m_640 or from env')
     ap.add_argument('--conf', type=float, help='Confidence threshold, default 0.3 or from env')
     ap.add_argument('--tag', help='Label used in output filename when --device is not set')
-    ap.add_argument('--seconds', type=float, default=0, help='Stop after N seconds (0 = run until Ctrl+C)')
+    ap.add_argument('--seconds', type=float, default=0, help='Stop after N seconds (0 = run until end of file / Ctrl+C)')
     ap.add_argument('--out', help='Output mp4 path (default: recordings/<tag>_<timestamp>.mp4)')
     ap.add_argument('--no-record', action='store_true', help='Preview stats only, skip writing the video file')
+    ap.add_argument('--resolution', help='W,H — resize every frame before inference, mirroring SCREEN_RESOLUTION (default: from --device env, or none)')
+    ap.add_argument('--crop', help='x1,y1,x2,y2 — crop after resize, mirroring CROP_AREA (default: from --device env, or none)')
     args = ap.parse_args()
 
-    rtsp_url, triton_url, model_name, conf, tag = resolve_config(args)
+    rtsp_url, triton_url, model_name, conf, tag, resolution, crop = resolve_config(args)
+    is_file = os.path.isfile(rtsp_url)
 
-    print(f"[config] source={rtsp_url}")
+    print(f"[config] source={rtsp_url} ({'file' if is_file else 'stream'})")
     print(f"[config] triton={triton_url} model={model_name} conf={conf}")
+    print(f"[config] resolution={resolution or 'native'} crop={crop or 'none'}")
+
+    def preprocess(frame):
+        if resolution is not None:
+            frame = cv2.resize(frame, resolution)
+        if crop is not None:
+            x1, y1, x2, y2 = crop
+            frame = frame[y1:y2, x1:x2]
+        return frame
 
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not cap.isOpened():
-        sys.exit(f"error: could not open stream {rtsp_url}")
+        sys.exit(f"error: could not open source {rtsp_url}")
 
     ok, frame = cap.read()
     if not ok or frame is None:
-        sys.exit("error: stream opened but first frame read failed")
+        sys.exit("error: source opened but first frame read failed")
+    frame = preprocess(frame)
     h, w = frame.shape[:2]
     src_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     if src_fps <= 1 or src_fps > 60:
@@ -146,12 +202,17 @@ def main():
         while True:
             ok, frame = cap.read()
             if not ok or frame is None:
+                if is_file:
+                    print("[done] end of file reached")
+                    break
                 print("[warn] frame read failed, reconnecting...")
                 cap.release()
                 time.sleep(1.0)
                 cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 continue
+
+            frame = preprocess(frame)
 
             t0 = time.monotonic()
             try:
