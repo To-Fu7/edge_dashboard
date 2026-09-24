@@ -45,6 +45,13 @@ FIRESMOKE_INFER_INTERVAL_S = 1.0
 APD_ALERTED_TRACKS_MAX = 2000
 FACE_ALERTED_TRACKS_MAX = 2000
 
+# How many consecutive missed frames a person box keeps drawing at its last
+# known position before disappearing — smooths single-frame gaps (a corrupted
+# H.264 frame, a momentary low-confidence miss) on the annotated stream. Kept
+# short deliberately: long enough to absorb a one-off glitch, short enough
+# that a person who actually left the frame doesn't leave a stale ghost box.
+TRACK_COAST_FRAMES = 2
+
 _imshow_available = True  # opencv-headless has no GUI; disabled on first failure
 
 
@@ -245,6 +252,7 @@ def reset_tracking_state(tracker, apd_tracker=None, face_tracker=None):
     state.state_in.clear()
     state.state_out.clear()
     state.zone_inside_prev.clear()
+    state.track_coast.clear()  # a reset tracker recycles ids; stale cached boxes must not carry over
     if apd_tracker is not None:
         reset_apd_state(apd_tracker)
     if face_tracker is not None:
@@ -490,6 +498,7 @@ def main():
 
                 person_detected = False
                 region_detections = 0
+                seen_track_ids = set()
 
                 # Clear and update person coordinates for current frame
                 state.latest_person_coordinates = []
@@ -500,6 +509,7 @@ def main():
                         continue
                     track_id = int(trk[4])
                     conf = float(trk[5])
+                    seen_track_ids.add(track_id)
 
                     person_detected = True
                     region_detections += 1
@@ -525,9 +535,26 @@ def main():
 
                     # Counting state machine (line_crossing / zone) — verbatim legacy logic
                     geom = process_track(track_id, [x1, y1, x2, y2], original_frame)
+                    state.track_coast[track_id] = {'box': (x1, y1, x2, y2), 'geom': geom, 'ttl': TRACK_COAST_FRAMES}
 
                     if draw_now:
                         draw_track(frame, track_id, x1, y1, x2, y2, geom)
+
+                # Coast recently-matched tracks through a brief gap (e.g. one
+                # corrupted/dropped H.264 frame from a flaky camera) so the
+                # annotated stream's box doesn't blink off and back on — this
+                # only affects what gets drawn, not tracking/counting state.
+                if draw_now:
+                    for tid in list(state.track_coast.keys()):
+                        if tid in seen_track_ids:
+                            continue
+                        cached = state.track_coast[tid]
+                        cached['ttl'] -= 1
+                        if cached['ttl'] <= 0:
+                            del state.track_coast[tid]
+                            continue
+                        cx1, cy1, cx2, cy2 = cached['box']
+                        draw_track(frame, tid, cx1, cy1, cx2, cy2, cached['geom'])
 
                 # Process APD violations (per-track dedup; draws a red alarm box)
                 for trk in apd_tracks:
