@@ -26,6 +26,7 @@ import numpy as np
 import app_state as state
 import counting_config as cfg
 import lifecycle
+from capture import LatestFrameCapture, is_live_source
 from counting import process_track
 from detection import apd, face, firesmoke
 from inference import TritonEmbedClient, TritonUnavailableError, TritonYoloClient
@@ -95,13 +96,14 @@ def safe_destroy_windows():
 
 
 def initialize_video_capture(video_source):
-    """Initialize video capture (software decode — the slim image has no NVDEC)."""
-    logging.info(f'Initializing video capture with source: {video_source}')
+    """Initialize video capture (software decode — the slim image has no NVDEC).
+    Live streams get a latest-frame reader thread; files are read frame-by-frame."""
     os.environ.setdefault('OPENCV_FFMPEG_CAPTURE_OPTIONS', 'rtsp_transport;tcp')
-    cap = cv2.VideoCapture(video_source, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    cap.set(cv2.CAP_PROP_FPS, 10)
-    return cap
+    if is_live_source(video_source):
+        logging.info(f'Initializing video capture with source: {video_source} (latest-frame reader)')
+        return LatestFrameCapture(video_source)
+    logging.info(f'Initializing video capture with source: {video_source}')
+    return cv2.VideoCapture(video_source, cv2.CAP_FFMPEG)
 
 
 def get_video_source():
@@ -382,7 +384,7 @@ def main():
             while True:
                 count += 1
                 if count % cfg.FRAME_SKIP != 0:
-                    cap.grab()  # Advance buffer without decoding
+                    cap.grab()  # skip this frame
                     continue
                 ret, frame = cap.read()
 
@@ -701,7 +703,10 @@ def main():
                 fps_counter += 1
                 if time.time() - fps_timer >= 10.0:
                     actual_fps = fps_counter / (time.time() - fps_timer)
-                    logging.info(f"Processing FPS: {actual_fps:.1f}")
+                    if isinstance(cap, LatestFrameCapture):
+                        logging.info(f"Processing FPS: {actual_fps:.1f} (dropped {cap.pop_dropped()} stale frames)")
+                    else:
+                        logging.info(f"Processing FPS: {actual_fps:.1f}")
                     fps_counter = 0
                     fps_timer = time.time()
 
