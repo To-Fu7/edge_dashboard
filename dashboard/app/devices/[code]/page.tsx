@@ -21,6 +21,47 @@ import type { DeviceEnvConfig, ContainerStatus } from '@/lib/types';
 
 interface DrawnLine { label: string; p1: { x: number; y: number }; p2: { x: number; y: number } }
 
+// Log filtering: categorize each raw docker-log line by its main.py log
+// pattern, so the Logs tab can show/hide whole categories instead of one
+// undifferentiated scroll. Order matters — first match wins, most specific
+// patterns (errors) checked before generic ones.
+type LogCategory = 'error' | 'warning' | 'person_io' | 'detection' | 'security' | 'fps' | 'other';
+
+const LOG_CATEGORIES: { id: LogCategory; label: string; activeClass: string; test: (line: string) => boolean }[] = [
+  {
+    id: 'error', label: 'Errors', activeClass: 'bg-red-500/15 text-red-400 border-red-500/40',
+    test: l => /error while decoding|\[h264 @|non-existing pps|decode_slice_header|cabac decode|\bERROR\b|Exception|Traceback|Failed to read frame|unavailable/i.test(l),
+  },
+  {
+    id: 'warning', label: 'Warnings', activeClass: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/40',
+    test: l => /\bWARNING\b|\bWARN\b/i.test(l),
+  },
+  {
+    id: 'person_io', label: 'Person In/Out', activeClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40',
+    test: l => /\bIN through\b|\bOUT through\b|Total IN:|Total OUT:|person_in|person_out/i.test(l),
+  },
+  {
+    id: 'detection', label: 'Detection Activity', activeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/40',
+    test: l => /crossed (IN|OUT) line|Waiting for person detection/i.test(l),
+  },
+  {
+    id: 'security', label: 'APD / Face / Fire-Smoke', activeClass: 'bg-orange-500/15 text-orange-400 border-orange-500/40',
+    test: l => /APD violation|Face event|\bFire\b|\bSmoke\b|Intrusion/i.test(l),
+  },
+  {
+    id: 'fps', label: 'Performance (FPS)', activeClass: 'bg-purple-500/15 text-purple-400 border-purple-500/40',
+    test: l => /Processing FPS/i.test(l),
+  },
+  {
+    id: 'other', label: 'Other', activeClass: 'bg-muted text-muted-foreground border-border',
+    test: () => true, // fallback — must stay last
+  },
+];
+
+function categorizeLog(line: string): LogCategory {
+  return (LOG_CATEGORIES.find(c => c.test(line)) ?? LOG_CATEGORIES[LOG_CATEGORIES.length - 1]).id;
+}
+
 function envZonesToDrawn(env: Partial<DeviceEnvConfig>, prefix = 'zone'): DrawnZone[] {
   const zones: DrawnZone[] = [];
   for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
@@ -111,6 +152,9 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const [actionLoading, setActionLoading] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [liveStreaming, setLiveStreaming] = useState(false);
+  const [activeLogFilters, setActiveLogFilters] = useState<Set<LogCategory>>(
+    () => new Set(LOG_CATEGORIES.map(c => c.id)) // everything on by default — filtering is opt-out, not opt-in
+  );
   const logScrollRef = useRef<HTMLDivElement>(null);
   const [lines, setLines] = useState<DrawnLine[]>([]);
   const [zones, setZones] = useState<DrawnZone[]>([]);
@@ -760,21 +804,52 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
               </div>
               <Button size="sm" variant="ghost" onClick={() => setLogs([])}>Clear</Button>
             </div>
+
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {LOG_CATEGORIES.map(cat => {
+                const active = activeLogFilters.has(cat.id);
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveLogFilters(prev => {
+                      const next = new Set(prev);
+                      if (next.has(cat.id)) next.delete(cat.id); else next.add(cat.id);
+                      return next;
+                    })}
+                    className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                      active ? cat.activeClass : 'bg-transparent text-muted-foreground/50 border-border'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+
             <div
               ref={logScrollRef}
               className="h-96 rounded border border-border bg-black/90 p-3 overflow-y-auto"
             >
-              {logs.length === 0 ? (
-                <p className="text-xs text-gray-500">
-                  {status === 'running' ? 'Waiting for logs...' : 'No logs available.'}
-                </p>
-              ) : (
-                <div className="space-y-0.5">
-                  {logs.map((line, i) => (
-                    <LogLine key={i} line={line} />
-                  ))}
-                </div>
-              )}
+              {(() => {
+                const visible = logs.filter(line => activeLogFilters.has(categorizeLog(line)));
+                if (logs.length === 0) {
+                  return (
+                    <p className="text-xs text-gray-500">
+                      {status === 'running' ? 'Waiting for logs...' : 'No logs available.'}
+                    </p>
+                  );
+                }
+                if (visible.length === 0) {
+                  return <p className="text-xs text-gray-500">No log lines match the selected filters.</p>;
+                }
+                return (
+                  <div className="space-y-0.5">
+                    {visible.map((line, i) => (
+                      <LogLine key={i} line={line} />
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </Section>
         </TabsContent>
@@ -949,14 +1024,19 @@ function StreamPreview({ code, env }: { code: string; env: Partial<DeviceEnvConf
   );
 }
 
-function LogLine({ line }: { line: string }) {
-  const isError = /error|exception|fatal/i.test(line);
-  const isWarn = /warning|warn/i.test(line);
+const LOG_LINE_TEXT_COLOR: Record<LogCategory, string> = {
+  error: 'text-red-400',
+  warning: 'text-yellow-400',
+  person_io: 'text-emerald-400',
+  detection: 'text-blue-300',
+  security: 'text-orange-400',
+  fps: 'text-purple-300',
+  other: 'text-gray-300',
+};
 
+function LogLine({ line }: { line: string }) {
   return (
-    <p className={`text-xs font-mono leading-5 ${
-      isError ? 'text-red-400' : isWarn ? 'text-yellow-400' : 'text-gray-300'
-    }`}>
+    <p className={`text-xs font-mono leading-5 ${LOG_LINE_TEXT_COLOR[categorizeLog(line)]}`}>
       {line}
     </p>
   );
