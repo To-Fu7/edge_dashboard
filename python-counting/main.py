@@ -381,6 +381,8 @@ def main():
             last_process_time = time.time()
             fps_counter = 0
             fps_timer = time.time()
+            det_sum = 0
+            trk_sum = 0
             while True:
                 count += 1
                 if count % cfg.FRAME_SKIP != 0:
@@ -441,6 +443,8 @@ def main():
                 # ---- Local ByteTrack (same tracker/config as legacy model.track) ----
                 tracks = tracker.update(Detections(dets[:, :4], dets[:, 4], dets[:, 5]))
                 # tracks rows: x1,y1,x2,y2,track_id,score,cls,det_idx (Kalman-smoothed)
+                det_sum += len(dets)
+                trk_sum += len(tracks)
 
                 # ---- Optional APD detection (independent model + tracker) ----
                 apd_tracks = []
@@ -703,12 +707,15 @@ def main():
                 fps_counter += 1
                 if time.time() - fps_timer >= 10.0:
                     actual_fps = fps_counter / (time.time() - fps_timer)
+                    persons = f"persons/frame det={det_sum / fps_counter:.2f} trk={trk_sum / fps_counter:.2f}"
                     if isinstance(cap, LatestFrameCapture):
-                        logging.info(f"Processing FPS: {actual_fps:.1f} (dropped {cap.pop_dropped()} stale frames)")
+                        logging.info(f"Processing FPS: {actual_fps:.1f} (dropped {cap.pop_dropped()} stale frames, {persons})")
                     else:
-                        logging.info(f"Processing FPS: {actual_fps:.1f}")
+                        logging.info(f"Processing FPS: {actual_fps:.1f} ({persons})")
                     fps_counter = 0
                     fps_timer = time.time()
+                    det_sum = 0
+                    trk_sum = 0
 
                 # Handle hourly resample record rotation (skip if midnight reset will handle it)
                 if not lifecycle.should_reset() and state.current_tracking_hour is not None:
