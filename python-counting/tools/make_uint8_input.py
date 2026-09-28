@@ -24,17 +24,8 @@ import onnx
 from onnx import TensorProto, helper, numpy_helper
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--src', required=True, help='Source model dir (with 1/model.onnx and metadata.json)')
-    ap.add_argument('--dst', required=True, help='Destination model dir to create')
-    args = ap.parse_args()
-
-    src, dst = Path(args.src), Path(args.dst)
-    meta = json.loads((src / 'metadata.json').read_text())
-    size = int(meta['imgsz'])
-
-    model = onnx.load(str(src / '1' / 'model.onnx'))
+def add_uint8_input(model, size):
+    """Replace the float NCHW input with uint8 NHWC + Cast/Div(255)/Transpose, in place."""
     graph = model.graph
     old = graph.input[0]
     name = old.name
@@ -51,6 +42,21 @@ def main():
     graph.node.insert(0, helper.make_node('Transpose', [f'{name}_scaled'], [inner], perm=[0, 3, 1, 2]))
     graph.node.insert(0, helper.make_node('Div', [f'{name}_float', f'{name}_255'], [f'{name}_scaled']))
     graph.node.insert(0, helper.make_node('Cast', [name], [f'{name}_float'], to=TensorProto.FLOAT))
+    return name, batch_dim
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--src', required=True, help='Source model dir (with 1/model.onnx and metadata.json)')
+    ap.add_argument('--dst', required=True, help='Destination model dir to create')
+    args = ap.parse_args()
+
+    src, dst = Path(args.src), Path(args.dst)
+    meta = json.loads((src / 'metadata.json').read_text())
+    size = int(meta['imgsz'])
+
+    model = onnx.load(str(src / '1' / 'model.onnx'))
+    name, batch_dim = add_uint8_input(model, size)
 
     onnx.checker.check_model(model)
     (dst / '1').mkdir(parents=True, exist_ok=True)
