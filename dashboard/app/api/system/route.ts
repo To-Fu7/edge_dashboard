@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import os from 'os';
 import fs from 'fs';
 import { spawn } from 'child_process';
+import { getGpuMetrics } from '@/lib/triton';
 
 interface CpuStat { total: number; idle: number }
 
@@ -50,6 +51,13 @@ interface GpuInfo {
   utilization: number;
   memUsed: number;
   memTotal: number;
+  powerDraw: number | null;   // W
+  powerLimit: number | null;  // W
+}
+
+function parseWatts(s: string | undefined): number | null {
+  const v = parseFloat(s ?? '');
+  return Number.isFinite(v) ? v : null;  // "[N/A]" on GPUs without power readings
 }
 
 function runNvidiaSmi(): Promise<GpuInfo[] | null> {
@@ -61,7 +69,7 @@ function runNvidiaSmi(): Promise<GpuInfo[] | null> {
       let proc;
       try {
         proc = spawn(bin, [
-          '--query-gpu=name,utilization.gpu,memory.used,memory.total',
+          '--query-gpu=name,utilization.gpu,memory.used,memory.total,power.draw,power.limit',
           '--format=csv,noheader,nounits',
         ]);
       } catch {
@@ -97,6 +105,8 @@ function runNvidiaSmi(): Promise<GpuInfo[] | null> {
               utilization: parseInt(parts[1]) || 0,
               memUsed: parseInt(parts[2]) || 0,
               memTotal: parseInt(parts[3]) || 0,
+              powerDraw: parseWatts(parts[4]),
+              powerLimit: parseWatts(parts[5]),
             };
           }).filter(g => g.memTotal > 0);
           resolve(gpus.length > 0 ? gpus : null);
@@ -112,8 +122,12 @@ function runNvidiaSmi(): Promise<GpuInfo[] | null> {
   return tryBin(candidates[0]).then(r => r ?? tryBin(candidates[1]));
 }
 
-function getGpuStats(): Promise<GpuInfo[] | null> {
-  return runNvidiaSmi();
+async function getGpuStats(): Promise<GpuInfo[] | null> {
+  const smi = await runNvidiaSmi();
+  if (smi) return smi;
+  // nvidia-smi can't run in this image (glibc binary on musl), so read Triton's GPU metrics instead
+  const triton = await getGpuMetrics();
+  return triton?.map(g => ({ name: 'GPU', ...g })) ?? null;
 }
 
 export async function GET() {

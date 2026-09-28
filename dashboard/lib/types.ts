@@ -19,7 +19,7 @@ export interface DeviceEnvConfig {
   CROP_AREA?: string;         // '[(x1,y1),(x2,y2)]' top-left → bottom-right
   ANNOTATED_STREAM?: string;  // 'true' = serve annotated MJPEG with bboxes on device detail page
   STREAM_PORT?: string;       // annotated MJPEG port (default 8090)
-  TRITON_MODEL?: string;      // Triton model repository name (e.g. yolo26m_640)
+  TRITON_MODEL?: string;      // Triton model repository name (e.g. yolo26s_640_e2e_u8)
   YOLO_IOU?: string;          // NMS IoU (raw-output fallback path only)
   YOLO_MODEL?: string;        // legacy (pre-Triton); used to derive TRITON_MODEL
   YOLO_CONFIDENCE: string;
@@ -110,7 +110,7 @@ export type HardwareMode = 'jetson' | 'server' | 'cpu';
 
 export interface TritonSettings {
   imageTag: string;       // tritonserver release, e.g. '24.08' (suffix -py3/-py3-igpu is derived from hardware mode)
-  defaultModel: string;   // model repository name used for new devices, e.g. 'yolo26m_640'
+  defaultModel: string;   // model repository name used for new devices, e.g. 'yolo26s_640_e2e_u8'
   faceEmbedModel: string; // ArcFace model repo name used to embed enrollment photos (must match cameras' FACE_EMBED_MODEL)
 }
 
@@ -161,7 +161,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   hardwareMode: 'jetson',
   triton: {
     imageTag: '24.08',
-    defaultModel: 'yolo26m_640',
+    defaultModel: 'yolo26s_640_e2e_u8',
     faceEmbedModel: '',
   },
   pg: {

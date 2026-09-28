@@ -122,7 +122,7 @@ export default function SettingsPage() {
             <ModelSelect
               value={settings.triton.defaultModel}
               onChange={v => setTriton('defaultModel', v)}
-              placeholder="yolo26m_640"
+              placeholder="yolo26s_640_e2e_u8"
               models={tritonModels}
               kind="detection"
             />

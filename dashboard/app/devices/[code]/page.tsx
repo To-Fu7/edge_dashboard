@@ -451,7 +451,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                 <ModelSelect
                   value={env.TRITON_MODEL || ''}
                   onChange={v => setField('TRITON_MODEL', v)}
-                  placeholder="yolo26m_640 (Triton model repository name)"
+                  placeholder="yolo26s_640_e2e_u8 (Triton model repository name)"
                   models={tritonModels}
                   kind="detection"
                 />

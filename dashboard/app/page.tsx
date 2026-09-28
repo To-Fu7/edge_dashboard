@@ -236,7 +236,14 @@ function TritonStatusCard() {
   );
 }
 
-interface GpuInfo { name: string; utilization: number; memUsed: number; memTotal: number }
+interface GpuInfo {
+  name: string;
+  utilization: number;
+  memUsed: number;            // MB
+  memTotal: number;           // MB
+  powerDraw: number | null;   // W
+  powerLimit: number | null;  // W
+}
 interface SystemData {
   cpu: { pct: number };
   ram: { used: number; total: number; usedGb: string; totalGb: string; pct: number };
@@ -314,18 +321,37 @@ function SystemStats() {
             {data === null ? dash : data.gpus === null ? 'N/A' : `${data.gpus[0].utilization}%`}
           </span>
         </div>
-        {data?.gpus ? (
-          <div className="space-y-1.5">
-            <Bar pct={data.gpus[0].utilization} color="bg-orange-500" />
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">VRAM</span>
-              <span className="text-[10px] tabular-nums text-muted-foreground">
-                {data.gpus[0].memUsed} / {data.gpus[0].memTotal} MB
-              </span>
+        {data?.gpus ? (() => {
+          const g = data.gpus[0];
+          const memPct = Math.round(g.memUsed / g.memTotal * 100);
+          const powerPct = g.powerDraw !== null && g.powerLimit ? Math.round(g.powerDraw / g.powerLimit * 100) : null;
+          return (
+            <div className="space-y-1.5">
+              <Bar pct={g.utilization} color="bg-orange-500" />
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground">VRAM</span>
+                <span className="text-[10px] tabular-nums text-muted-foreground">
+                  {(g.memUsed / 1024).toFixed(1)} / {(g.memTotal / 1024).toFixed(1)} GB ({memPct}%)
+                </span>
+              </div>
+              <Bar pct={memPct} color="bg-purple-500" />
+              {g.powerDraw !== null && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-muted-foreground">Power</span>
+                    <span className="text-[10px] tabular-nums text-muted-foreground">
+                      {g.powerDraw.toFixed(0)}{g.powerLimit ? ` / ${g.powerLimit.toFixed(0)}` : ''} W
+                      {powerPct !== null ? ` (${powerPct}%)` : ''}
+                    </span>
+                  </div>
+                  {powerPct !== null && (
+                    <Bar pct={powerPct} color={powerPct >= 90 ? 'bg-red-500' : 'bg-yellow-500'} />
+                  )}
+                </>
+              )}
             </div>
-            <Bar pct={Math.round(data.gpus[0].memUsed / data.gpus[0].memTotal * 100)} color="bg-purple-500" />
-          </div>
-        ) : (
+          );
+        })() : (
           <Bar pct={0} color="bg-muted-foreground" />
         )}
       </div>

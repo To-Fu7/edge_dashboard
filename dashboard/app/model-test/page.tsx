@@ -163,7 +163,7 @@ export default function ModelTestPage() {
             <ModelSelect
               value={model}
               onChange={setModel}
-              placeholder="yolo26m_640"
+              placeholder="yolo26s_640_e2e_u8"
               models={detectionModels}
               kind="detection"
             />
