@@ -53,7 +53,13 @@ for onnx in "$MODEL_REPO"/*/1/model.onnx; do
     if [ -f "$meta" ]; then
         imgsz="$(grep -o '"imgsz"[[:space:]]*:[[:space:]]*[0-9]*' "$meta" | grep -o '[0-9]*$')"
         imgsz="${imgsz:-640}"
-        shape_args=(--minShapes="images:1x3x${imgsz}x${imgsz}" --optShapes="images:4x3x${imgsz}x${imgsz}" --maxShapes="images:8x3x${imgsz}x${imgsz}")
+        # make_uint8_input.py models take uint8 NHWC images instead of float NCHW
+        if grep -q '"input_layout"[[:space:]]*:[[:space:]]*"NHWC"' "$meta"; then
+            s="${imgsz}x${imgsz}x3"
+        else
+            s="3x${imgsz}x${imgsz}"
+        fi
+        shape_args=(--minShapes="images:1x${s}" --optShapes="images:4x${s}" --maxShapes="images:8x${s}")
     fi
 
     trtexec --onnx="$onnx" --saveEngine="$plan" --fp16 "${shape_args[@]}" \

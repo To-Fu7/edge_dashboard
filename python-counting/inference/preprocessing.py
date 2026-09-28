@@ -47,12 +47,18 @@ def preprocess(
     input_shape: tuple[int, int],
     dtype: np.dtype = np.float32,
 ) -> tuple[np.ndarray, float, tuple[float, float]]:
-    """BGR frame -> normalized NCHW tensor ready for Triton.
+    """BGR frame -> tensor ready for Triton.
 
-    Returns (tensor[1,3,H,W], ratio, (dw, dh)) for coordinate un-mapping.
+    Float models get a normalized NCHW tensor [1,3,H,W]. UINT8 models (built by
+    tools/make_uint8_input.py) take the letterboxed RGB image as-is, NHWC
+    [1,H,W,3], and do the /255 + transpose on the GPU — 4x less data to build,
+    serialize and send per frame.
+
+    Returns (tensor, ratio, (dw, dh)) for coordinate un-mapping.
     """
     padded, ratio, pad = letterbox(frame_bgr, input_shape)
-    rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
-    tensor = rgb.astype(np.float32) / 255.0
-    tensor = np.ascontiguousarray(tensor.transpose(2, 0, 1)[None], dtype=dtype)
-    return tensor, ratio, pad
+    if dtype == np.uint8:
+        return cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)[None], ratio, pad
+    # One multithreaded pass (BGR->RGB, x/255, HWC->CHW) instead of three numpy copies.
+    tensor = cv2.dnn.blobFromImage(padded, scalefactor=1 / 255.0, swapRB=True)
+    return tensor.astype(dtype, copy=False), ratio, pad
