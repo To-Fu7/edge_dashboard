@@ -11,10 +11,15 @@ Produces:
     models/<name>_<imgsz>/config.pbtxt      (onnxruntime CPU config; the
                                              model-builder rewrites it for TensorRT)
 
-YOLO26 models are natively end-to-end (NMS-free). For YOLO11 and older we export
-with nms=True so NMS is embedded in the graph and the client never needs it.
-Export conf is set low (0.01) so the client-side YOLO_CONFIDENCE filter stays
-the single source of truth, and iou matches main.py's tracker call (0.3).
+Never exports with ultralytics' nms=True: that NMS stage only returns detections
+for the first image of a batch, and Triton's dynamic batching merges requests
+from different cameras (it emptied about half the frames in production). YOLO26
+is NMS-free and exports as end-to-end [B, 300, 6]; older heads (YOLO11) export
+the raw [B, 4+nc, anchors] head and the client runs NMS (decode_raw). Both are
+batch-safe. The layout is read from the exported ONNX, not from ultralytics'
+end2end flag, which is False even for YOLO26 checkpoints.
+
+Verify any new model with tools/batch_check.py before pointing cameras at it.
 """
 
 import argparse
@@ -29,10 +34,7 @@ def main():
     ap.add_argument('--imgsz', type=int, default=640)
     ap.add_argument('--out-dir', default='../models', help='Triton model repository root')
     ap.add_argument('--name', default=None, help='Model repo name (default: <stem>_<imgsz>)')
-    ap.add_argument('--iou', type=float, default=0.3, help='NMS IoU baked into e2e export (matches main.py iou=0.3)')
-    ap.add_argument('--conf', type=float, default=0.01, help='Min conf baked into e2e export (keep low; client filters)')
     ap.add_argument('--max-det', type=int, default=300)
-    ap.add_argument('--no-nms', action='store_true', help='Export raw head output (client does NMS)')
     args = ap.parse_args()
 
     from ultralytics import YOLO
@@ -44,29 +46,28 @@ def main():
     version_dir.mkdir(parents=True, exist_ok=True)
 
     model = YOLO(str(weights))
-    is_e2e = getattr(model.model, 'end2end', False)
-    use_nms = not args.no_nms
-
-    print(f"Exporting {weights} -> {version_dir / 'model.onnx'} (e2e={is_e2e}, nms={use_nms})")
+    print(f"Exporting {weights} -> {version_dir / 'model.onnx'}")
     onnx_path = model.export(
         format='onnx',
         imgsz=args.imgsz,
-        nms=use_nms,
-        conf=args.conf,
-        iou=args.iou,
+        nms=False,
         max_det=args.max_det,
         simplify=True,
         dynamic=True,    # dynamic batch axis: required for Triton dynamic batching (max_batch_size 8)
     )
     shutil.move(onnx_path, version_dir / 'model.onnx')
 
+    import onnx  # installed by ultralytics' ONNX export
+    out_dims = [d.dim_param or d.dim_value
+                for d in onnx.load(str(version_dir / 'model.onnx')).graph.output[0].type.tensor_type.shape.dim]
+    is_e2e = out_dims[-1] == 6
+    print(f"Output {out_dims}: {'end-to-end' if is_e2e else 'raw head (client-side NMS)'}")
+
     metadata = {
         'source_weights': weights.name,
         'imgsz': args.imgsz,
-        'end_to_end': is_e2e or use_nms,   # output is [1, max_det, 6] xyxy+conf+cls
+        'end_to_end': is_e2e,   # True: [B, max_det, 6] xyxy+conf+cls; False: raw [B, 4+nc, anchors]
         'max_det': args.max_det,
-        'export_conf': args.conf,
-        'export_iou': args.iou,
         'classes': model.names,
     }
     (model_dir / 'metadata.json').write_text(json.dumps(metadata, indent=2))

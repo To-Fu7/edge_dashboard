@@ -47,8 +47,12 @@ pindah device: jalankan ulang model-builder (`FORCE_BUILD=1`).
 
 ## Catatan format output model
 
-- Export default = end-to-end (NMS embedded): output `[batch, max_det, 6]` =
+- YOLO26 (NMS-free) = end-to-end: output `[batch, max_det, 6]` =
   `x1,y1,x2,y2,conf,cls` dalam koordinat piksel input model (letterboxed).
-- Kalau konversi NMS ke TRT gagal di Jetson lama, export ulang dengan `--no-nms`;
-  client otomatis mendeteksi output raw `[batch, 4+nc, anchors]` dan menjalankan
-  NMS numpy sendiri.
+- YOLO11 dan lebih lama = head raw `[batch, 4+nc, anchors]`; client otomatis
+  mendeteksinya dan menjalankan NMS numpy sendiri.
+- `export_model.py` sengaja **tidak** memakai `nms=True` ultralytics: NMS itu hanya
+  mengeluarkan deteksi untuk gambar pertama dalam batch, sedangkan Triton
+  menggabungkan request dari banyak kamera (dynamic batching). Cek model baru
+  dengan `tools/batch_check.py` sebelum dipakai kamera.
+- Input uint8 NHWC (lebih ringan dikirim per frame): `tools/make_uint8_input.py`.
