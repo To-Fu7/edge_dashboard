@@ -7,15 +7,18 @@ di-mount ke container `triton` sebagai `/models`.
 
 ```
 models/
-  yolo26m_640/            # <weights-stem>_<imgsz>
+  yolo26s_640_e2e_u8/     # <weights>_<imgsz>_e2e_u8 (model produksi)
     config.pbtxt          # backend config (onnxruntime default, tensorrt_plan setelah build)
-    metadata.json         # imgsz, e2e flag, classes (ditulis oleh tools/export_model.py)
+    metadata.json         # imgsz, e2e flag, input_layout, classes (export_model.py / make_uint8_input.py)
     1/
       model.onnx          # artifact kanonik, di-commit ke git
       model.plan          # TensorRT engine, dibuild ON-DEVICE, di-gitignore
 ```
 
 ## Workflow
+
+Langkah lengkap produksi (export → uint8 → build → `batch_check`) ada di
+[../README.md § Setup model](../README.md#22-model-person-counting). Ringkas:
 
 1. **Export ONNX** (sekali, di mana saja — satu-satunya langkah yang butuh ultralytics/torch):
    ```bash

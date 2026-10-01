@@ -9,7 +9,7 @@ PG_HOST='host.docker.internal'
 PG_PORT='5435'
 PG_DB='postgres'
 PG_USER='postgres'
-PG_PASS='pahlawan10'
+PG_PASS='<password>'
 
 # MQTT GLOBAL
 MQTT_BROKER = '10.11.0.34'
@@ -36,8 +36,8 @@ SCREEN_RESOLUTION= [800, 600]
 
 # TRITON INFERENCE SERVER (shared across all cameras)
 # TRITON_URL is injected by docker-compose (triton:8001); override here if needed.
-# TRITON_MODEL = model repository name, see models/ (e.g. yolo26m_640, yolo11n_640)
-TRITON_MODEL = 'yolo26m_640'
+# TRITON_MODEL = model repository name, see models/ (e.g. yolo26s_640_e2e_u8, yolo26s_1280_e2e_u8)
+TRITON_MODEL = 'yolo26s_640_e2e_u8'
 YOLO_CONFIDENCE = '0.3'
 # NMS IoU threshold (only used when the model is a raw-output export without embedded NMS)
 YOLO_IOU = '0.3'
