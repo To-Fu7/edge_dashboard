@@ -844,6 +844,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           </div>
         </TabsContent>
 
+        {!EDGE_MODE && (
         <TabsContent value="logs" className="pt-4 space-y-4">
           {status === 'running' && (
             <Section title="Live Stream">
