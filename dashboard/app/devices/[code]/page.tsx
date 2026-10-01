@@ -23,6 +23,47 @@ import { toReachableStreamUrl } from '@/lib/utils';
 
 interface DrawnLine { label: string; p1: { x: number; y: number }; p2: { x: number; y: number } }
 
+// Log filtering: categorize each raw docker-log line by its main.py log
+// pattern, so the Logs tab can show/hide whole categories instead of one
+// undifferentiated scroll. Order matters — first match wins, most specific
+// patterns (errors) checked before generic ones.
+type LogCategory = 'error' | 'warning' | 'person_io' | 'detection' | 'security' | 'fps' | 'other';
+
+const LOG_CATEGORIES: { id: LogCategory; label: string; activeClass: string; test: (line: string) => boolean }[] = [
+  {
+    id: 'error', label: 'Errors', activeClass: 'bg-red-500/15 text-red-400 border-red-500/40',
+    test: l => /error while decoding|\[h264 @|non-existing pps|decode_slice_header|cabac decode|\bERROR\b|Exception|Traceback|Failed to read frame|unavailable/i.test(l),
+  },
+  {
+    id: 'warning', label: 'Warnings', activeClass: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/40',
+    test: l => /\bWARNING\b|\bWARN\b/i.test(l),
+  },
+  {
+    id: 'person_io', label: 'Person In/Out', activeClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40',
+    test: l => /\bIN through\b|\bOUT through\b|Total IN:|Total OUT:|person_in|person_out/i.test(l),
+  },
+  {
+    id: 'detection', label: 'Detection Activity', activeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/40',
+    test: l => /crossed (IN|OUT) line|Waiting for person detection/i.test(l),
+  },
+  {
+    id: 'security', label: 'APD / Face / Fire-Smoke', activeClass: 'bg-orange-500/15 text-orange-400 border-orange-500/40',
+    test: l => /APD violation|Face event|\bFire\b|\bSmoke\b|Intrusion/i.test(l),
+  },
+  {
+    id: 'fps', label: 'Performance (FPS)', activeClass: 'bg-purple-500/15 text-purple-400 border-purple-500/40',
+    test: l => /Processing FPS/i.test(l),
+  },
+  {
+    id: 'other', label: 'Other', activeClass: 'bg-muted text-muted-foreground border-border',
+    test: () => true, // fallback — must stay last
+  },
+];
+
+function categorizeLog(line: string): LogCategory {
+  return (LOG_CATEGORIES.find(c => c.test(line)) ?? LOG_CATEGORIES[LOG_CATEGORIES.length - 1]).id;
+}
+
 /** prefix: 'zone' for person-counting zones, 'apdZone'/'faceZone' for the
  *  independent APD/Face restriction zones (same lettered-suffix env scheme,
  *  see counting_config.load_zones_from_env on the Python side). */
@@ -124,13 +165,21 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const [actionLoading, setActionLoading] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [liveStreaming, setLiveStreaming] = useState(false);
+  const [activeLogFilters, setActiveLogFilters] = useState<Set<LogCategory>>(
+    () => new Set(LOG_CATEGORIES.map(c => c.id)) // everything on by default — filtering is opt-out, not opt-in
+  );
   const logScrollRef = useRef<HTMLDivElement>(null);
   const [lines, setLines] = useState<DrawnLine[]>([]);
   const [zones, setZones] = useState<DrawnZone[]>([]);
   const [apdZones, setApdZones] = useState<DrawnZone[]>([]);
   const [faceZones, setFaceZones] = useState<DrawnZone[]>([]);
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
-  const [tritonModels, setTritonModels] = useState<{ name: string; state: string }[]>([]);
+  const [tritonModels, setTritonModels] = useState<{
+    name: string;
+    state: string;
+    kind?: 'detection' | 'embedding';
+    metadata?: { classes?: Record<string, string> };
+  }[]>([]);
 
   useEffect(() => {
     fetch('/api/triton/models')
@@ -196,6 +245,27 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
 
   function setField(key: string, value: string) {
     setEnv(prev => ({ ...prev, [key]: value }));
+  }
+
+  // Class names the selected APD model can actually output (from its own
+  // metadata.json, same source main.py's apd_classes resolves labels from) —
+  // ordered by class id so the checklist matches the model's own numbering.
+  const apdModel = tritonModels.find(m => m.name === env.APD_MODEL);
+  const apdModelClasses = apdModel?.metadata?.classes
+    ? Object.entries(apdModel.metadata.classes).sort(([a], [b]) => Number(a) - Number(b)).map(([, name]) => name)
+    : [];
+  // Unset APD_VIOLATION_CLASSES = every detected class counts as a violation
+  // (the original behavior) — shown here as "everything checked" so the
+  // checklist visually matches what's actually happening until the user
+  // unchecks something they don't want treated as an alarm.
+  const apdViolationSet = env.APD_VIOLATION_CLASSES
+    ? new Set(env.APD_VIOLATION_CLASSES.split(',').map(s => s.trim()).filter(Boolean))
+    : new Set(apdModelClasses);
+
+  function toggleApdViolationClass(name: string) {
+    const next = new Set(apdViolationSet);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setField('APD_VIOLATION_CLASSES', Array.from(next).join(','));
   }
 
   async function handleSave() {
@@ -428,8 +498,9 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                 <ModelSelect
                   value={env.TRITON_MODEL || ''}
                   onChange={v => setField('TRITON_MODEL', v)}
-                  placeholder="yolo26m_640 (Triton model repository name)"
+                  placeholder="yolo26s_640_e2e_u8 (Triton model repository name)"
                   models={tritonModels}
+                  kind="detection"
                 />
               </FormField>
               <FormField label="Confidence (0.0–1.0)">
@@ -470,6 +541,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('APD_MODEL', v)}
                         placeholder="apd_640"
                         models={tritonModels}
+                        kind="detection"
                       />
                     </FormField>
                     <FormField label="Confidence (0.0–1.0)">
@@ -477,6 +549,34 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                     </FormField>
                     <FormField label="Tag">
                       <TagSelect value={env.APD_TAG || 'alarm'} onChange={v => setField('APD_TAG', v)} />
+                    </FormField>
+                    <FormField label="Violation Classes" className="col-span-2">
+                      {apdModelClasses.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {env.APD_MODEL
+                            ? 'No classes found in this model’s metadata.json — every detected class will be treated as a violation.'
+                            : 'Select a model above to list its classes.'}
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border border-border p-3">
+                          {apdModelClasses.map(name => (
+                            <label key={name} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={apdViolationSet.has(name)}
+                                onChange={() => toggleApdViolationClass(name)}
+                                className="rounded border-border accent-primary"
+                              />
+                              {name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        Only checked classes get a red alarm box and trigger a violation event
+                        (e.g. uncheck a compliant class like &quot;helmet&quot;, keep &quot;no-helmet&quot; checked).
+                        Everything is checked by default until you uncheck something.
+                      </p>
                     </FormField>
                   </div>
                 )}
@@ -498,6 +598,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('FIRE_SMOKE_MODEL', v)}
                         placeholder="fire_smoke_640"
                         models={tritonModels}
+                        kind="detection"
                       />
                     </FormField>
                     <FormField label="Confidence (0.0–1.0)">
@@ -532,6 +633,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('FACE_MODEL', v)}
                         placeholder="face_640"
                         models={tritonModels}
+                        kind="detection"
                       />
                     </FormField>
                     <FormField label="Face Embedding Model">
@@ -540,6 +642,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         onChange={v => setField('FACE_EMBED_MODEL', v)}
                         placeholder="arcface_112"
                         models={tritonModels}
+                        kind="embedding"
                       />
                     </FormField>
                     <FormField label="Confidence (0.0–1.0)">
@@ -557,11 +660,34 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                     <FormField label="Cache Refresh (minutes)">
                       <Input type="number" min="1" value={env.FACE_CACHE_REFRESH_MINUTES || '10'} onChange={e => setField('FACE_CACHE_REFRESH_MINUTES', e.target.value)} />
                     </FormField>
-                    <FormField label="Best-Shot Capture Frames">
+                    <FormField label="Best-Shot Frames">
                       <Input type="number" min="1" value={env.FACE_CAPTURE_FRAMES || '5'} onChange={e => setField('FACE_CAPTURE_FRAMES', e.target.value)} />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Sightings buffered per track before embedding the sharpest/best-lit/most
-                        confident one — higher = better selection but longer verdict delay.
+                      <p className="text-xs text-muted-foreground">
+                        Sightings buffered per person before embedding the sharpest/best-angled one. Higher = more accurate, slower verdict.
+                      </p>
+                    </FormField>
+                    <FormField label="Crop Margin (fraction of box)">
+                      <Input type="number" step="0.05" min="0" value={env.FACE_CROP_MARGIN || '0.25'} onChange={e => setField('FACE_CROP_MARGIN', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Extra context added around the detected face box before embedding.
+                      </p>
+                    </FormField>
+                    <FormField label="Crop Min Size (px)">
+                      <Input type="number" min="1" value={env.FACE_CROP_MIN_SIZE || '112'} onChange={e => setField('FACE_CROP_MIN_SIZE', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Small crops are upscaled to at least this size (shortest side) before embedding.
+                      </p>
+                    </FormField>
+                    <FormField label="Min. Detection Size (px)">
+                      <Input type="number" min="0" value={env.FACE_MIN_SIZE || '40'} onChange={e => setField('FACE_MIN_SIZE', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Hikvision-style capture distance limit: faces smaller than this (too far away) are ignored entirely.
+                      </p>
+                    </FormField>
+                    <FormField label="Max. Detection Size (px)">
+                      <Input type="number" min="0" value={env.FACE_MAX_SIZE || '0'} onChange={e => setField('FACE_MAX_SIZE', e.target.value)} />
+                      <p className="text-xs text-muted-foreground">
+                        Faces larger than this (too close to the camera) are ignored. 0 = no upper limit.
                       </p>
                     </FormField>
                   </div>
@@ -718,8 +844,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           </div>
         </TabsContent>
 
-        {/* ── LOGS ── */}
-        {!EDGE_MODE && (
         <TabsContent value="logs" className="pt-4 space-y-4">
           {status === 'running' && (
             <Section title="Live Stream">
@@ -742,21 +866,52 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
               </div>
               <Button size="sm" variant="ghost" onClick={() => setLogs([])}>Clear</Button>
             </div>
+
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {LOG_CATEGORIES.map(cat => {
+                const active = activeLogFilters.has(cat.id);
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveLogFilters(prev => {
+                      const next = new Set(prev);
+                      if (next.has(cat.id)) next.delete(cat.id); else next.add(cat.id);
+                      return next;
+                    })}
+                    className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                      active ? cat.activeClass : 'bg-transparent text-muted-foreground/50 border-border'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+
             <div
               ref={logScrollRef}
               className="h-96 rounded border border-border bg-black/90 p-3 overflow-y-auto"
             >
-              {logs.length === 0 ? (
-                <p className="text-xs text-gray-500">
-                  {status === 'running' ? 'Waiting for logs...' : 'No logs available.'}
-                </p>
-              ) : (
-                <div className="space-y-0.5">
-                  {logs.map((line, i) => (
-                    <LogLine key={i} line={line} />
-                  ))}
-                </div>
-              )}
+              {(() => {
+                const visible = logs.filter(line => activeLogFilters.has(categorizeLog(line)));
+                if (logs.length === 0) {
+                  return (
+                    <p className="text-xs text-gray-500">
+                      {status === 'running' ? 'Waiting for logs...' : 'No logs available.'}
+                    </p>
+                  );
+                }
+                if (visible.length === 0) {
+                  return <p className="text-xs text-gray-500">No log lines match the selected filters.</p>;
+                }
+                return (
+                  <div className="space-y-0.5">
+                    {visible.map((line, i) => (
+                      <LogLine key={i} line={line} />
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </Section>
         </TabsContent>
@@ -775,9 +930,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function FormField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function FormField({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="space-y-1.5">
+    <div className={`space-y-1.5 ${className || ''}`}>
       <Label>{label}</Label>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {children}
@@ -1136,14 +1291,19 @@ function StreamPreview({ code, env }: { code: string; env: Partial<DeviceEnvConf
   );
 }
 
-function LogLine({ line }: { line: string }) {
-  const isError = /error|exception|fatal/i.test(line);
-  const isWarn = /warning|warn/i.test(line);
+const LOG_LINE_TEXT_COLOR: Record<LogCategory, string> = {
+  error: 'text-red-400',
+  warning: 'text-yellow-400',
+  person_io: 'text-emerald-400',
+  detection: 'text-blue-300',
+  security: 'text-orange-400',
+  fps: 'text-purple-300',
+  other: 'text-gray-300',
+};
 
+function LogLine({ line }: { line: string }) {
   return (
-    <p className={`text-xs font-mono leading-5 ${
-      isError ? 'text-red-400' : isWarn ? 'text-yellow-400' : 'text-gray-300'
-    }`}>
+    <p className={`text-xs font-mono leading-5 ${LOG_LINE_TEXT_COLOR[categorizeLog(line)]}`}>
       {line}
     </p>
   );

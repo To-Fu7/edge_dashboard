@@ -3,7 +3,6 @@ import {
   composeUpTriton,
   composeStopTriton,
   composeRestartTriton,
-  runModelBuilder,
 } from '@/lib/compose';
 
 export const dynamic = 'force-dynamic';
@@ -24,15 +23,6 @@ export async function POST(
       case 'restart':
         await composeRestartTriton();
         return NextResponse.json({ success: true });
-      case 'build-engines': {
-        let force = false;
-        try {
-          const body = await request.json();
-          force = Boolean(body?.force);
-        } catch { /* no body */ }
-        const { stdout, stderr } = await runModelBuilder(force);
-        return NextResponse.json({ success: true, output: `${stdout}\n${stderr}`.trim() });
-      }
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
     }

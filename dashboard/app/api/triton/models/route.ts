@@ -12,13 +12,13 @@ export const dynamic = 'force-dynamic';
  *  Triton is down) and Triton's live repository index (adds READY state). */
 export async function GET() {
   try {
-    const onDisk: { name: string; hasOnnx: boolean; hasPlan: boolean; metadata?: unknown }[] = [];
+    const onDisk: { name: string; hasOnnx: boolean; hasPlan: boolean; metadata?: unknown; kind: 'detection' | 'embedding' }[] = [];
     if (fs.existsSync(MODELS_DIR)) {
       for (const entry of fs.readdirSync(MODELS_DIR, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         const dir = path.join(MODELS_DIR, entry.name);
         if (!fs.existsSync(path.join(dir, 'config.pbtxt'))) continue;
-        let metadata: unknown;
+        let metadata: { classes?: unknown } | undefined;
         try {
           metadata = JSON.parse(fs.readFileSync(path.join(dir, 'metadata.json'), 'utf-8'));
         } catch { /* optional */ }
@@ -27,6 +27,12 @@ export async function GET() {
           hasOnnx: fs.existsSync(path.join(dir, '1', 'model.onnx')),
           hasPlan: fs.existsSync(path.join(dir, '1', 'model.plan')),
           metadata,
+          // export_model.py (the only exporter for detection models) always
+          // writes a `classes` map; embedding models (ArcFace etc., brought in
+          // manually per models/README.md) have no such exporter and no
+          // metadata.json with a classes field — the one reliable signal
+          // available without hardcoding model names.
+          kind: metadata?.classes ? 'detection' : 'embedding',
         });
       }
     }

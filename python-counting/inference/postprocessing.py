@@ -2,12 +2,10 @@
 
 Two output layouts are supported (auto-detected from the tensor shape):
 
-1. End-to-end / NMS-embedded export (YOLO26 native, or YOLO11 exported with
-   nms=True): shape [batch, max_det, 6] rows = x1,y1,x2,y2,conf,cls in
-   letterboxed-input pixels. Nothing to do but filter.
-2. Raw detection head: shape [batch, 4+nc, anchors] — decode xywh + class
-   scores, then run numpy NMS (fallback for models where the NMS ops fail to
-   convert to TensorRT).
+1. End-to-end export (YOLO26, NMS-free): shape [batch, max_det, 6] rows =
+   x1,y1,x2,y2,conf,cls in letterboxed-input pixels. Nothing to do but filter.
+2. Raw detection head (YOLO11 and older): shape [batch, 4+nc, anchors] — decode
+   xywh + class scores, then run numpy NMS.
 
 Both paths finish with unletterbox(): (xy - pad) / ratio, the inverse of
 preprocessing.letterbox, clipped to the frame — after which coordinates match

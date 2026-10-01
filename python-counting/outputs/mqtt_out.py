@@ -6,6 +6,8 @@ import base64
 import datetime
 import json
 import logging
+import queue
+import threading
 
 import cv2
 import paho.mqtt.client as mqtt
@@ -16,10 +18,35 @@ from outputs.db_worker import db_queue_write
 
 mqtt_client = None
 
+# JPEG+base64 encoding of event images runs here instead of on the frame loop,
+# where a burst of crossings (a group walking through) used to stall processing.
+IMAGE_EVENT_QUEUE_MAX = 200
+_image_event_queue = queue.Queue(maxsize=IMAGE_EVENT_QUEUE_MAX)
+_image_event_thread = None
+
+
+def _image_event_worker():
+    while True:
+        item = _image_event_queue.get()
+        if item is None:
+            return
+        try:
+            _encode_and_publish(*item)
+        finally:
+            _image_event_queue.task_done()
+
+
+def _start_image_event_worker():
+    global _image_event_thread
+    if _image_event_thread is None:
+        _image_event_thread = threading.Thread(target=_image_event_worker, name='mqtt-image-events', daemon=True)
+        _image_event_thread.start()
+
 
 def init_mqtt():
     """Initialize MQTT client"""
     global mqtt_client
+    _start_image_event_worker()
     try:
         mqtt_client = mqtt.Client()
 
@@ -47,6 +74,12 @@ def init_mqtt():
 
 
 def shutdown_mqtt():
+    if _image_event_thread is not None:
+        try:
+            _image_event_queue.put(None, timeout=1)
+            _image_event_thread.join(timeout=5)
+        except queue.Full:
+            pass
     if mqtt_client:
         mqtt_client.loop_stop()
         mqtt_client.disconnect()
@@ -65,6 +98,19 @@ def _publish_image_event(image, extra_fields, log_label, topic=None):
         logging.warning(f"MQTT client not initialized, skipping {log_label}")
         return
 
+    # Copy: callers pass views into frames that keep being drawn on / reused.
+    item = (image.copy(), extra_fields, log_label, topic,
+            datetime.datetime.now(cfg.local_tz).isoformat())
+    if _image_event_thread is None:
+        _encode_and_publish(*item)
+        return
+    try:
+        _image_event_queue.put_nowait(item)
+    except queue.Full:
+        logging.error(f"MQTT image event queue full ({IMAGE_EVENT_QUEUE_MAX}), dropping {log_label}")
+
+
+def _encode_and_publish(image, extra_fields, log_label, topic, timestamp):
     try:
         _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, cfg.JPEG_QUALITY])
 
@@ -72,7 +118,7 @@ def _publish_image_event(image, extra_fields, log_label, topic=None):
             "device_id": cfg.device_id,
             "device_code": cfg.device_code,
             "device_name": cfg.device_name,
-            "timestamp": datetime.datetime.now(cfg.local_tz).isoformat(),
+            "timestamp": timestamp,
             **extra_fields,
             "image": base64.b64encode(buffer.tobytes()).decode('utf-8'),
         }

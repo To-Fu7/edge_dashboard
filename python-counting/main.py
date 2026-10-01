@@ -12,7 +12,7 @@ alive, the MJPEG stream shows "INFERENCE UNAVAILABLE", reconnection is retried
 with exponential backoff (1s → 30s), and the tracker is reset after reconnect so
 stale Kalman states can't produce phantom crossings.
 
-The legacy single-file implementation is preserved at legacy/main_legacy.py.
+The legacy single-file (pre-Triton) implementation lives in git history (legacy/main_legacy.py, removed after the Triton migration).
 """
 import datetime
 import logging
@@ -26,6 +26,7 @@ import numpy as np
 import app_state as state
 import counting_config as cfg
 import lifecycle
+from capture import LatestFrameCapture, is_live_source
 from counting import process_track
 from detection import apd, face, firesmoke, intrusion
 from inference import TritonEmbedClient, TritonUnavailableError, TritonYoloClient
@@ -46,6 +47,13 @@ FIRESMOKE_INFER_INTERVAL_S = 1.0
 APD_ALERTED_TRACKS_MAX = 2000
 FACE_ALERTED_TRACKS_MAX = 2000
 INTRUSION_ALERTED_TRACKS_MAX = 2000
+
+# How many consecutive missed frames a person box keeps drawing at its last
+# known position before disappearing — smooths single-frame gaps (a corrupted
+# H.264 frame, a momentary low-confidence miss) on the annotated stream. Kept
+# short deliberately: long enough to absorb a one-off glitch, short enough
+# that a person who actually left the frame doesn't leave a stale ghost box.
+TRACK_COAST_FRAMES = 2
 
 _imshow_available = True  # opencv-headless has no GUI; disabled on first failure
 
@@ -90,13 +98,15 @@ def safe_destroy_windows():
 
 
 def initialize_video_capture(video_source):
-    """Initialize video capture (software decode — the slim image has no NVDEC)."""
-    logging.info(f'Initializing video capture with source: {video_source}')
+    """Initialize video capture (software decode — the slim image has no NVDEC).
+    Live streams get a latest-frame reader thread; files are read frame-by-frame."""
     os.environ.setdefault('OPENCV_FFMPEG_CAPTURE_OPTIONS', 'rtsp_transport;tcp')
-    cap = cv2.VideoCapture(video_source, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    cap.set(cv2.CAP_PROP_FPS, 10)
-    return cap
+    if is_live_source(video_source):
+        logging.info(f'Initializing video capture with source: {video_source} (latest-frame reader)')
+        return LatestFrameCapture(video_source)
+    logging.info(f'Initializing video capture with source: {video_source}')
+    return cv2.VideoCapture(video_source, cv2.CAP_FFMPEG)
+
 
 
 def get_video_source():
@@ -251,6 +261,7 @@ def reset_tracking_state(tracker, apd_tracker=None, face_tracker=None):
     # its own), so its dedup/position state must reset here too, unconditionally.
     state.intrusion_alerted_tracks.clear()
     state.intrusion_last_point.clear()
+    state.track_coast.clear()  # a reset tracker recycles ids; stale cached boxes must not carry over
     if apd_tracker is not None:
         reset_apd_state(apd_tracker)
     if face_tracker is not None:
@@ -384,10 +395,12 @@ def main():
             last_process_time = time.time()
             fps_counter = 0
             fps_timer = time.time()
+            det_sum = 0
+            trk_sum = 0
             while True:
                 count += 1
                 if count % cfg.FRAME_SKIP != 0:
-                    cap.grab()  # Advance buffer without decoding
+                    cap.grab()  # skip this frame
                     continue
                 ret, frame = cap.read()
 
@@ -444,6 +457,8 @@ def main():
                 # ---- Local ByteTrack (same tracker/config as legacy model.track) ----
                 tracks = tracker.update(Detections(dets[:, :4], dets[:, 4], dets[:, 5]))
                 # tracks rows: x1,y1,x2,y2,track_id,score,cls,det_idx (Kalman-smoothed)
+                det_sum += len(dets)
+                trk_sum += len(tracks)
 
                 # ---- Optional APD detection (independent model + tracker) ----
                 apd_tracks = []
@@ -503,6 +518,7 @@ def main():
 
                 person_detected = False
                 region_detections = 0
+                seen_track_ids = set()
 
                 # Clear and update person coordinates for current frame
                 state.latest_person_coordinates = []
@@ -513,6 +529,7 @@ def main():
                         continue
                     track_id = int(trk[4])
                     conf = float(trk[5])
+                    seen_track_ids.add(track_id)
 
                     person_detected = True
                     region_detections += 1
@@ -538,6 +555,7 @@ def main():
 
                     # Counting state machine (line_crossing / zone) — verbatim legacy logic
                     geom = process_track(track_id, [x1, y1, x2, y2], original_frame)
+                    state.track_coast[track_id] = {'box': (x1, y1, x2, y2), 'geom': geom, 'ttl': TRACK_COAST_FRAMES}
 
                     if draw_now:
                         draw_track(frame, track_id, x1, y1, x2, y2, geom)
@@ -551,12 +569,30 @@ def main():
                             cv2.putText(frame, 'INTRUSION', (x1, max(0, y1 - 24)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-                # Process APD violations (per-track dedup; draws an orange box)
+                # Coast recently-matched tracks through a brief gap (e.g. one
+                # corrupted/dropped H.264 frame from a flaky camera) so the
+                # annotated stream's box doesn't blink off and back on — this
+                # only affects what gets drawn, not tracking/counting state.
+                if draw_now:
+                    for tid in list(state.track_coast.keys()):
+                        if tid in seen_track_ids:
+                            continue
+                        cached = state.track_coast[tid]
+                        cached['ttl'] -= 1
+                        if cached['ttl'] <= 0:
+                            del state.track_coast[tid]
+                            continue
+                        cx1, cy1, cx2, cy2 = cached['box']
+                        draw_track(frame, tid, cx1, cy1, cx2, cy2, cached['geom'])
+
+                # Process APD violations (per-track dedup; draws a red alarm box)
                 for trk in apd_tracks:
                     track_id = int(trk[4])
                     conf = float(trk[5])
                     class_id = int(trk[6])
                     label = apd_classes.get(class_id, f'class_{class_id}')
+                    if cfg.APD_VIOLATION_CLASSES and label not in cfg.APD_VIOLATION_CLASSES:
+                        continue  # detected, but not a checked violation class (e.g. a compliant "helmet")
                     ax1, ay1, ax2, ay2 = (int(v) for v in trk[:4])
                     ax1 += cfg.CROP_X1
                     ay1 += cfg.CROP_Y1
@@ -565,9 +601,9 @@ def main():
                     if not _center_in_any_zone((ax1 + ax2) // 2, (ay1 + ay2) // 2, cfg.APD_EFFECTIVE_ZONES):
                         continue  # outside the APD restriction zone — not a violation here
                     if draw_now:
-                        cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 165, 255), 2)
+                        cv2.rectangle(frame, (ax1, ay1), (ax2, ay2), (0, 0, 255), 2)
                         cv2.putText(frame, label, (ax1, max(0, ay1 - 6)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     apd.process_detection(track_id, label, conf, (ax1, ay1, ax2, ay2), original_frame)
 
                 # Bound apd_alerted_tracks: ByteTrack ids are monotonic within a run,
@@ -616,12 +652,18 @@ def main():
                     fy1 += cfg.CROP_Y1
                     fx2 += cfg.CROP_X1
                     fy2 += cfg.CROP_Y1
+                    face_size = min(fx2 - fx1, fy2 - fy1)
+                    if face_size < cfg.FACE_MIN_SIZE:
+                        continue  # too far/small to embed reliably
+                    if cfg.FACE_MAX_SIZE > 0 and face_size > cfg.FACE_MAX_SIZE:
+                        continue  # implausibly close/large for this camera's framing
                     if not _center_in_any_zone((fx1 + fx2) // 2, (fy1 + fy2) // 2, cfg.FACE_EFFECTIVE_ZONES):
                         continue  # outside the Face restriction zone
 
                     # "Zoom" first: margin-expanded, upscaled crop — small
                     # CCTV faces embedded raw match poorly (see crop_face).
-                    face_crop = crop_face(original_frame, (fx1, fy1, fx2, fy2))
+                    face_crop = crop_face(original_frame, (fx1, fy1, fx2, fy2),
+                                          margin=cfg.FACE_CROP_MARGIN, min_size=cfg.FACE_CROP_MIN_SIZE)
                     if face_crop.size == 0:
                         continue
 
@@ -696,9 +738,15 @@ def main():
                 fps_counter += 1
                 if time.time() - fps_timer >= 10.0:
                     actual_fps = fps_counter / (time.time() - fps_timer)
-                    logging.info(f"Processing FPS: {actual_fps:.1f}")
+                    persons = f"persons/frame det={det_sum / fps_counter:.2f} trk={trk_sum / fps_counter:.2f}"
+                    if isinstance(cap, LatestFrameCapture):
+                        logging.info(f"Processing FPS: {actual_fps:.1f} (dropped {cap.pop_dropped()} stale frames, {persons})")
+                    else:
+                        logging.info(f"Processing FPS: {actual_fps:.1f} ({persons})")
                     fps_counter = 0
                     fps_timer = time.time()
+                    det_sum = 0
+                    trk_sum = 0
 
                 # Handle hourly resample record rotation (skip if midnight reset will handle it)
                 if not lifecycle.should_reset() and state.current_tracking_hour is not None:

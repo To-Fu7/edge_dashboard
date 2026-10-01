@@ -23,7 +23,7 @@ from tritonclient.utils import InferenceServerException
 from .postprocessing import decode_e2e, decode_raw, is_end_to_end, unletterbox
 from .preprocessing import preprocess
 
-_TRITON_TO_NP = {"FP32": np.float32, "FP16": np.float16}
+_TRITON_TO_NP = {"FP32": np.float32, "FP16": np.float16, "UINT8": np.uint8}
 
 
 class TritonUnavailableError(RuntimeError):
@@ -50,6 +50,7 @@ class TritonYoloClient:
         self._client: grpcclient.InferenceServerClient | None = None
         self.input_name: str | None = None
         self.input_dtype = np.float32
+        self.input_datatype = "FP32"  # Triton's name for input_dtype
         self.input_shape: tuple[int, int] = (640, 640)  # (H, W)
         self.output_name: str | None = None
         self.end_to_end: bool = True
@@ -79,12 +80,16 @@ class TritonYoloClient:
         out = meta["outputs"][0]
         self.input_name = inp["name"]
         self.output_name = out["name"]
-        self.input_dtype = _TRITON_TO_NP.get(inp["datatype"], np.float32)
+        self.input_datatype = inp["datatype"] if inp["datatype"] in _TRITON_TO_NP else "FP32"
+        self.input_dtype = _TRITON_TO_NP[self.input_datatype]
         self._batched_model = int(config.get("max_batch_size", 0) or 0) > 0
 
-        # dims exclude the batch axis when max_batch_size > 0
+        # dims exclude the batch axis when max_batch_size > 0; UINT8 models are NHWC
         dims = [int(d) for d in inp["shape"]]
-        hw = dims[-2:] if len(dims) >= 2 else [640, 640]
+        if self.input_dtype == np.uint8 and len(dims) >= 3 and dims[-1] == 3:
+            hw = dims[-3:-1]
+        else:
+            hw = dims[-2:] if len(dims) >= 2 else [640, 640]
         self.input_shape = tuple(640 if d <= 0 else d for d in hw)
 
         out_dims = [int(d) for d in out["shape"]]
@@ -122,8 +127,7 @@ class TritonYoloClient:
             tensor, ratio, pad = preprocess(frame_bgr, self.input_shape, self.input_dtype)
             if pre_cache is not None:
                 pre_cache[cache_key] = (tensor, ratio, pad)
-        triton_dtype = "FP16" if self.input_dtype == np.float16 else "FP32"
-        infer_input = grpcclient.InferInput(self.input_name, list(tensor.shape), triton_dtype)
+        infer_input = grpcclient.InferInput(self.input_name, list(tensor.shape), self.input_datatype)
         infer_input.set_data_from_numpy(tensor)
         outputs = [grpcclient.InferRequestedOutput(self.output_name)]
 

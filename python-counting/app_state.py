@@ -32,6 +32,16 @@ last_daily_send = None
 # Store latest person coordinates for MQTT and bbox overlay
 latest_person_coordinates = []
 
+# Visual-only smoothing for the annotated stream: track_id -> {box, geom, ttl}
+# for a person track that WAS matched recently but isn't in this frame's
+# tracker output — e.g. a single corrupted/dropped H.264 frame from a flaky
+# camera can make one frame's detection vanish even though the tracker's own
+# internal state survives it fine via track_buffer. Without this, the drawn
+# box blinks off and back on for every such gap. Purely cosmetic — the real
+# tracker/counting state (last_points, state_in/out, etc.) is untouched;
+# this dict only decides what gets an extra frame or two of drawing.
+track_coast = {}
+
 # Actual per-frame resolution (width, height) — equals cfg.resolution when a
 # fixed SCREEN_RESOLUTION is configured, or the camera's native decoded frame
 # size when SCREEN_RESOLUTION=auto. Set once main.py has decoded the first

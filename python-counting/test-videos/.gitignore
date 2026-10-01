@@ -1,0 +1,6 @@
+# Test clips are large binary files, kept out of git — drop your own .mp4s
+# here for the dashboard's Model Test page (/model-test) to pick up.
+*.mp4
+*.avi
+*.mkv
+!.gitignore

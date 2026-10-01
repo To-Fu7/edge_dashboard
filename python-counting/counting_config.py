@@ -336,6 +336,13 @@ APD_ENABLED = os.getenv('APD_ENABLED', 'false').lower() == 'true'
 APD_MODEL = os.getenv('APD_MODEL', '')
 APD_CONFIDENCE = float(os.getenv('APD_CONFIDENCE', 0.3))
 APD_TAG = os.getenv('APD_TAG', 'alarm')
+# Which of the model's own class names count as a violation — e.g. a model
+# trained on both "helmet" (compliant) and "no-helmet" (violation) shouldn't
+# alarm on every detected class, only the violation ones. Comma-separated
+# class names, matched against metadata.json (dashboard reads/writes this as
+# a checklist built from the same file). Empty = every detected class is a
+# violation (the original, backward-compatible behavior).
+APD_VIOLATION_CLASSES = [c.strip() for c in os.getenv('APD_VIOLATION_CLASSES', '').split(',') if c.strip()]
 if APD_ENABLED and not APD_MODEL:
     logging.warning("APD_ENABLED=true but APD_MODEL is not set — APD detection will be disabled")
     APD_ENABLED = False
@@ -360,6 +367,25 @@ FACE_CACHE_REFRESH_MINUTES = float(os.getenv('FACE_CACHE_REFRESH_MINUTES', 10))
 # one (size/sharpness/confidence), instead of embedding whatever frame the
 # track first appeared in. Higher = better selection but longer verdict delay.
 FACE_CAPTURE_FRAMES = int(os.getenv('FACE_CAPTURE_FRAMES', 5))
+# Margin added around the detected face box before embedding (fraction of box
+# size) — ArcFace expects some context, and tracker boxes are often tighter
+# than the training crop. Higher = more context but more background/hair/ears.
+FACE_CROP_MARGIN = float(os.getenv('FACE_CROP_MARGIN', 0.25))
+# Small CCTV face crops are upscaled to at least this many pixels (shortest
+# side) before embedding, so the embedder's own resize starts from a cleanly
+# interpolated image instead of a handful of raw pixels. ArcFace models are
+# trained on 112x112 crops — raising this well above that mostly just costs
+# CPU on the upscale for no accuracy gain.
+FACE_CROP_MIN_SIZE = int(os.getenv('FACE_CROP_MIN_SIZE', 112))
+# Detected-face size gate (shortest side of the raw detector box, before the
+# crop_face margin/upscale) — same idea as Hikvision's "Min./Max. Pixel"
+# capture-distance setting on a 2D camera with no depth sensor: face size in
+# pixels IS the distance proxy. Below FACE_MIN_SIZE the face is too far/small
+# to embed reliably; above FACE_MAX_SIZE (0 = unlimited) it's implausibly
+# close/large for this camera's framing and more likely a false positive than
+# a genuine close-up.
+FACE_MIN_SIZE = int(os.getenv('FACE_MIN_SIZE', 40))
+FACE_MAX_SIZE = int(os.getenv('FACE_MAX_SIZE', 0))
 INSIDER_TAG = os.getenv('INSIDER_TAG', 'info')
 INTRUDER_TAG = os.getenv('INTRUDER_TAG', 'alarm')
 if FACE_ENABLED and not (FACE_MODEL and FACE_EMBED_MODEL):

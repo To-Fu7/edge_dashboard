@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/StatusBadge';
-import { Play, Square, RotateCcw, Camera, AlertCircle, RefreshCw, Layers, HammerIcon, Cpu, MemoryStick, MonitorDot } from 'lucide-react';
+import { Play, Square, RotateCcw, Camera, AlertCircle, RefreshCw, Layers, HammerIcon, Cpu, MemoryStick, MonitorDot, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { ContainerStatus } from '@/lib/types';
@@ -41,31 +41,10 @@ function HomePageContent() {
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
   const [fullRestarting, setFullRestarting] = useState(false);
   const [imageReady, setImageReady] = useState<boolean | null>(null);
-  const [building, setBuilding] = useState(false);
-  const [buildLog, setBuildLog] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/compose/status').then(r => r.json()).then(d => setImageReady(d.imageReady)).catch(() => setImageReady(false));
   }, []);
-
-  async function buildImage() {
-    setBuilding(true);
-    setBuildLog(null);
-    const toastId = toast.loading('Building Docker image... (this may take several minutes)');
-    try {
-      const res = await fetch('/api/compose/build', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setBuildLog(data.stderr || data.stdout || 'Build complete');
-      setImageReady(true);
-      toast.success('Image built successfully!', { id: toastId });
-    } catch (e) {
-      toast.error(`Build failed: ${e}`, { id: toastId });
-      setBuildLog(String(e));
-    } finally {
-      setBuilding(false);
-    }
-  }
 
   async function fullRestart() {
     setFullRestarting(true);
@@ -154,16 +133,14 @@ function HomePageContent() {
               The image <code className="font-mono bg-muted px-1 rounded">python-counting-services-python-1:latest</code> does not exist locally.
               Build it once before starting any cameras.
             </p>
-            {buildLog && (
-              <pre className="text-xs font-mono bg-black/80 text-gray-300 rounded p-2 max-h-32 overflow-auto whitespace-pre-wrap">
-                {buildLog}
-              </pre>
-            )}
           </div>
-          <Button size="sm" onClick={buildImage} disabled={building} className="shrink-0">
-            <HammerIcon className={`w-4 h-4 mr-2 ${building ? 'animate-pulse' : ''}`} />
-            {building ? 'Building...' : 'Build Image'}
-          </Button>
+          <Link href="/inference" className="shrink-0">
+            <Button size="sm">
+              <HammerIcon className="w-4 h-4 mr-2" />
+              Build Image
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </Link>
         </div>
       )}
 
@@ -265,16 +242,25 @@ function TritonStatusCard() {
             {acting === 'restart' ? 'Restarting…' : 'Restart'}
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={() => action('build-engines')} disabled={!!acting}
-          title="Build TensorRT engines for all ONNX models on this device (minutes)">
-          {acting === 'build-engines' ? 'Building…' : 'Build Engines'}
-        </Button>
+        <Link href="/inference">
+          <Button size="sm" variant="outline" title="Export ONNX / build TensorRT engines / build camera image, with live logs">
+            Build & Inference
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        </Link>
       </div>
     </div>
   );
 }
 
-interface GpuInfo { name: string; utilization: number; memUsed: number; memTotal: number }
+interface GpuInfo {
+  name: string;
+  utilization: number;
+  memUsed: number;            // MB
+  memTotal: number;           // MB
+  powerDraw: number | null;   // W
+  powerLimit: number | null;  // W
+}
 interface SystemData {
   cpu: { pct: number };
   ram: { used: number; total: number; usedGb: string; totalGb: string; pct: number };
@@ -352,18 +338,37 @@ function SystemStats() {
             {data === null ? dash : data.gpus === null ? 'N/A' : `${data.gpus[0].utilization}%`}
           </span>
         </div>
-        {data?.gpus ? (
-          <div className="space-y-1.5">
-            <Bar pct={data.gpus[0].utilization} color="bg-orange-500" />
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">VRAM</span>
-              <span className="text-[10px] tabular-nums text-muted-foreground">
-                {data.gpus[0].memUsed} / {data.gpus[0].memTotal} MB
-              </span>
+        {data?.gpus ? (() => {
+          const g = data.gpus[0];
+          const memPct = Math.round(g.memUsed / g.memTotal * 100);
+          const powerPct = g.powerDraw !== null && g.powerLimit ? Math.round(g.powerDraw / g.powerLimit * 100) : null;
+          return (
+            <div className="space-y-1.5">
+              <Bar pct={g.utilization} color="bg-orange-500" />
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground">VRAM</span>
+                <span className="text-[10px] tabular-nums text-muted-foreground">
+                  {(g.memUsed / 1024).toFixed(1)} / {(g.memTotal / 1024).toFixed(1)} GB ({memPct}%)
+                </span>
+              </div>
+              <Bar pct={memPct} color="bg-purple-500" />
+              {g.powerDraw !== null && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-muted-foreground">Power</span>
+                    <span className="text-[10px] tabular-nums text-muted-foreground">
+                      {g.powerDraw.toFixed(0)}{g.powerLimit ? ` / ${g.powerLimit.toFixed(0)}` : ''} W
+                      {powerPct !== null ? ` (${powerPct}%)` : ''}
+                    </span>
+                  </div>
+                  {powerPct !== null && (
+                    <Bar pct={powerPct} color={powerPct >= 90 ? 'bg-red-500' : 'bg-yellow-500'} />
+                  )}
+                </>
+              )}
             </div>
-            <Bar pct={Math.round(data.gpus[0].memUsed / data.gpus[0].memTotal * 100)} color="bg-purple-500" />
-          </div>
-        ) : (
+          );
+        })() : (
           <Bar pct={0} color="bg-muted-foreground" />
         )}
       </div>

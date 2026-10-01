@@ -112,6 +112,47 @@ function sumMetric(text: string, name: string): number {
   return total;
 }
 
+export interface TritonGpuMetrics {
+  uuid: string;
+  utilization: number;        // %
+  memUsed: number;            // MB
+  memTotal: number;           // MB
+  powerDraw: number | null;   // W
+  powerLimit: number | null;  // W
+}
+
+/** Per-GPU stats from Triton's metrics endpoint — works from containers where
+ *  nvidia-smi can't run (e.g. musl-based images). */
+export async function getGpuMetrics(): Promise<TritonGpuMetrics[] | null> {
+  try {
+    const res = await fetch(`${TRITON_METRICS_URL}/metrics`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const byGpu = new Map<string, Record<string, number>>();
+    const re = /^nv_gpu_(utilization|memory_used_bytes|memory_total_bytes|power_usage|power_limit)\{[^}]*gpu_uuid="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)$/gm;
+    for (const m of (await res.text()).matchAll(re)) {
+      const g = byGpu.get(m[2]) ?? {};
+      g[m[1]] = parseFloat(m[3]);
+      byGpu.set(m[2], g);
+    }
+    const gpus = [...byGpu.entries()]
+      .filter(([, g]) => g.memory_total_bytes > 0)
+      .map(([uuid, g]) => ({
+        uuid,
+        utilization: Math.round((g.utilization ?? 0) * 100),
+        memUsed: Math.round((g.memory_used_bytes ?? 0) / 1024 / 1024),
+        memTotal: Math.round(g.memory_total_bytes / 1024 / 1024),
+        powerDraw: g.power_usage ?? null,
+        powerLimit: g.power_limit ?? null,
+      }));
+    return gpus.length > 0 ? gpus : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getMetrics(): Promise<TritonMetrics | null> {
   try {
     const res = await fetch(`${TRITON_METRICS_URL}/metrics`, {

@@ -1,32 +1,28 @@
-"""Shared harness for the plain-script test files.
-
-Importing this module (before any app module) bootstraps sys.path and the
-minimal env vars counting_config needs, and provides the check()/finish()
-pass-fail counter used by every test file.
-"""
+"""Shared helpers for the script-style tests (run from python-counting/:
+`python tests/<name>.py`): makes the package importable, sets the minimal env
+counting_config needs at import time, and tallies check() results."""
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 os.environ.setdefault('SCREEN_RESOLUTION', '[800, 600]')
-os.environ.setdefault('lineA', '[(0,0),(10,10)]')
+os.environ.setdefault('lineA', '[(0, 0), (10, 10)]')
 os.environ.setdefault('DEBUG_MODE', 'true')
 
-PASS = 0
-FAIL = 0
+_failed = []
+_passed = 0
 
 
-def check(name, cond, detail=""):
-    global PASS, FAIL
+def check(name, cond, detail=''):
+    global _passed
     if cond:
-        PASS += 1
+        _passed += 1
         print(f"  PASS  {name}")
     else:
-        FAIL += 1
+        _failed.append(name)
         print(f"  FAIL  {name} {detail}")
 
 
 def finish():
-    print(f"\n{PASS} passed, {FAIL} failed")
-    sys.exit(1 if FAIL else 0)
+    print(f"\n{_passed} passed, {len(_failed)} failed")
+    sys.exit(1 if _failed else 0)

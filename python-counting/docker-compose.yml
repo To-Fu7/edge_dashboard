@@ -5,7 +5,7 @@ services:
     image: nvcr.io/nvidia/tritonserver:24.08-py3
     container_name: triton-inference-server
     restart: unless-stopped
-    command: tritonserver --model-repository=/models --strict-model-config=false
+    command: tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false
     runtime: nvidia
     shm_size: 1gb
     ports:

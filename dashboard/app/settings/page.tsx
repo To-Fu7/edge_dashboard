@@ -16,7 +16,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tritonModels, setTritonModels] = useState<{ name: string; state: string }[]>([]);
+  const [tritonModels, setTritonModels] = useState<{ name: string; state: string; kind?: 'detection' | 'embedding' }[]>([]);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -129,8 +129,9 @@ export default function SettingsPage() {
             <ModelSelect
               value={settings.triton.defaultModel}
               onChange={v => setTriton('defaultModel', v)}
-              placeholder="yolo26m_640"
+              placeholder="yolo26s_640_e2e_u8"
               models={tritonModels}
+              kind="detection"
             />
             <p className="text-xs text-muted-foreground">
               Model repository name assigned to newly created cameras.
@@ -142,6 +143,7 @@ export default function SettingsPage() {
               onChange={v => setTriton('faceEmbedModel', v)}
               placeholder="arcface_112"
               models={tritonModels}
+              kind="embedding"
             />
             <p className="text-xs text-muted-foreground">
               Used to embed photos on the Face Enrollment page — must match cameras&apos; FACE_EMBED_MODEL,
@@ -314,6 +316,51 @@ export default function SettingsPage() {
         </div>
       </Section>
       )}
+
+      <Section title="Additional Detection Defaults">
+        <p className="text-xs text-muted-foreground -mt-2">
+          Applied when a new camera is created. APD and Fire/Smoke are disabled
+          by default — enable them per camera once a model is selected.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <FormField label="People Counting Tag">
+            <TagSelect value={settings.defaults.people_counting_tag} onChange={v => setDefault('people_counting_tag', v)} />
+          </FormField>
+          <FormField label="APD Confidence">
+            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.apd_confidence} onChange={e => setDefault('apd_confidence', e.target.value)} />
+          </FormField>
+          <FormField label="APD Tag">
+            <TagSelect value={settings.defaults.apd_tag} onChange={v => setDefault('apd_tag', v)} />
+          </FormField>
+          <FormField label="Fire/Smoke Confidence">
+            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.fire_smoke_confidence} onChange={e => setDefault('fire_smoke_confidence', e.target.value)} />
+          </FormField>
+          <FormField label="Fire Tag">
+            <TagSelect value={settings.defaults.fire_tag} onChange={v => setDefault('fire_tag', v)} />
+          </FormField>
+          <FormField label="Smoke Tag">
+            <TagSelect value={settings.defaults.smoke_tag} onChange={v => setDefault('smoke_tag', v)} />
+          </FormField>
+          <FormField label="Fire/Smoke Cooldown (minutes)">
+            <Input type="number" min="1" value={settings.defaults.fire_smoke_cooldown_minutes} onChange={e => setDefault('fire_smoke_cooldown_minutes', e.target.value)} />
+          </FormField>
+          <FormField label="Face Confidence">
+            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.face_confidence} onChange={e => setDefault('face_confidence', e.target.value)} />
+          </FormField>
+          <FormField label="Face Match Threshold">
+            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.face_match_threshold} onChange={e => setDefault('face_match_threshold', e.target.value)} />
+          </FormField>
+          <FormField label="Insider Tag">
+            <TagSelect value={settings.defaults.insider_tag} onChange={v => setDefault('insider_tag', v)} />
+          </FormField>
+          <FormField label="Intruder Tag">
+            <TagSelect value={settings.defaults.intruder_tag} onChange={v => setDefault('intruder_tag', v)} />
+          </FormField>
+          <FormField label="Face Cache Refresh (minutes)">
+            <Input type="number" min="1" value={settings.defaults.face_cache_refresh_minutes} onChange={e => setDefault('face_cache_refresh_minutes', e.target.value)} />
+          </FormField>
+        </div>
+      </Section>
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving}>
