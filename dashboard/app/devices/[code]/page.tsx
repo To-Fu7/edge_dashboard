@@ -18,7 +18,7 @@ import { Play, Square, RotateCcw, ArrowLeft, Loader2, ArrowDownToLine, ArrowUpFr
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { DeviceEnvConfig, ContainerStatus } from '@/lib/types';
-import { EDGE_MODE } from '@/lib/edge-mode';
+import { useDetectionView } from '@/lib/view-mode';
 import { toReachableStreamUrl } from '@/lib/utils';
 
 interface DrawnLine { label: string; p1: { x: number; y: number }; p2: { x: number; y: number } }
@@ -150,13 +150,15 @@ function drawnLinesToEnv(lines: DrawnLine[]): Record<string, string> {
 export default function DeviceDetailPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const router = useRouter();
+  const { isDetection, devicesBase } = useDetectionView();
 
   const [activeTab, setActiveTab] = useState('basic');
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
-    // Ignore stale/bookmarked links into tabs this mode doesn't render.
-    if (tab && !(EDGE_MODE && (tab === 'lines' || tab === 'logs'))) setActiveTab(tab);
-  }, []);
+    // Ignore stale/bookmarked links into tabs this area doesn't render.
+    const available = isDetection ? ['basic', 'lines', 'logs'] : ['basic', 'stream'];
+    if (tab && available.includes(tab)) setActiveTab(tab);
+  }, [isDetection]);
 
   const [env, setEnv] = useState<Partial<DeviceEnvConfig>>({});
   const [status, setStatus] = useState<ContainerStatus>('unknown');
@@ -191,7 +193,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const fetchDevice = useCallback(async () => {
     try {
       const res = await fetch(`/api/devices/${code}`);
-      if (res.status === 404) { router.push('/devices'); return; }
+      if (res.status === 404) { router.push(devicesBase); return; }
       const data = await res.json();
       setEnv(data.env);
       setStatus(data.status);
@@ -205,7 +207,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
     } finally {
       setLoading(false);
     }
-  }, [code, router]);
+  }, [code, router, devicesBase]);
 
   useEffect(() => {
     fetchDevice();
@@ -354,7 +356,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   return (
     <div className="p-6 space-y-6 max-w-4xl">
       <div className="flex items-center gap-4">
-        <Link href="/devices">
+        <Link href={devicesBase}>
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" /> Devices
           </Button>
@@ -363,7 +365,12 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           <h1 className="text-xl font-semibold">{env.DEVICE_NAME || code}</h1>
           <p className="text-xs text-muted-foreground font-mono">{code}</p>
         </div>
-        {!EDGE_MODE && (
+        <Link href={isDetection ? `/devices/${code}` : `/detection/devices/${code}`}>
+          <Button size="sm" variant="ghost">
+            {isDetection ? 'Stream settings' : 'Detection settings'}
+          </Button>
+        </Link>
+        {isDetection && (
         <>
         <StatusBadge status={status} />
         <div className="flex gap-1.5">
@@ -390,9 +397,9 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="basic">Basic Settings</TabsTrigger>
-          {!EDGE_MODE && <TabsTrigger value="lines">Line Configuration</TabsTrigger>}
-          <TabsTrigger value="stream">Stream</TabsTrigger>
-          {!EDGE_MODE && <TabsTrigger value="logs">Logs</TabsTrigger>}
+          {isDetection && <TabsTrigger value="lines">Line Configuration</TabsTrigger>}
+          {!isDetection && <TabsTrigger value="stream">Stream</TabsTrigger>}
+          {isDetection && <TabsTrigger value="logs">Logs</TabsTrigger>}
         </TabsList>
 
         {/* ── BASIC SETTINGS ── */}
@@ -417,7 +424,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             </FormField>
           </Section>
 
-          {!EDGE_MODE && (
+          {isDetection && (
           <>
           <Section title="MQTT Topics">
             <div className="grid grid-cols-2 gap-4">
@@ -706,7 +713,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
         </TabsContent>
 
         {/* ── LINE CONFIGURATION ── */}
-        {!EDGE_MODE && (
+        {isDetection && (
         <TabsContent value="lines" className="space-y-6 pt-4">
           {(env.DETECTION_MODE || 'line_crossing') === 'line_crossing' ? (
             <>
@@ -844,7 +851,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           </div>
         </TabsContent>
 
-        {!EDGE_MODE && (
+        {isDetection && (
         <TabsContent value="logs" className="pt-4 space-y-4">
           {status === 'running' && (
             <Section title="Live Stream">

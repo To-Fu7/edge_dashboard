@@ -10,7 +10,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { Plus, Pencil, Trash2, RefreshCw, Play, Square, RotateCcw, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ContainerStatus } from '@/lib/types';
-import { EDGE_MODE } from '@/lib/edge-mode';
+import { useDetectionView } from '@/lib/view-mode';
 
 interface Device {
   deviceCode: string;
@@ -22,6 +22,7 @@ interface Device {
 }
 
 export default function DevicesPage() {
+  const { isDetection, devicesBase } = useDetectionView();
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -93,7 +94,7 @@ export default function DevicesPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Devices</h1>
+          <h1 className="text-2xl font-semibold">{isDetection ? 'Detection Devices' : 'Devices'}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {loading ? 'Loading...' : `${devices.length} camera${devices.length !== 1 ? 's' : ''} configured`}
           </p>
@@ -103,7 +104,7 @@ export default function DevicesPage() {
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          {!EDGE_MODE && (
+          {isDetection && (
           <Button variant="outline" size="sm" onClick={fullRestart} disabled={fullRestarting}>
             <Layers className={`w-4 h-4 mr-2 ${fullRestarting ? 'animate-pulse' : ''}`} />
             {fullRestarting ? 'Running...' : 'Full Restart'}
@@ -128,7 +129,7 @@ export default function DevicesPage() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Code</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Stream URL</th>
-                {!EDGE_MODE && <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>}
+                {isDetection && <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>}
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Actions</th>
               </tr>
             </thead>
@@ -142,14 +143,14 @@ export default function DevicesPage() {
                     <td className="px-4 py-3 text-xs text-muted-foreground max-w-56 truncate" title={device.rtspUrl}>
                       {device.rtspUrl ? device.rtspUrl.replace(/:[^@]+@/, ':***@') : '—'}
                     </td>
-                    {!EDGE_MODE && (
+                    {isDetection && (
                     <td className="px-4 py-3">
                       <StatusBadge status={device.status} />
                     </td>
                     )}
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        {!EDGE_MODE && (
+                        {isDetection && (
                         <>
                         {device.status !== 'running' ? (
                           <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => containerAction(device.deviceCode, 'start')} disabled={isLoading}>
@@ -165,7 +166,7 @@ export default function DevicesPage() {
                         </Button>
                         </>
                         )}
-                        <Link href={`/devices/${device.deviceCode}`}>
+                        <Link href={`${devicesBase}/${device.deviceCode}`}>
                           <Button size="sm" variant="ghost" className="h-7 px-2">
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>

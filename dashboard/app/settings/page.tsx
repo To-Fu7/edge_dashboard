@@ -10,9 +10,10 @@ import { TagSelect } from '@/components/TagSelect';
 import { toast } from 'sonner';
 import type { GlobalSettings } from '@/lib/types';
 import { DEFAULT_SETTINGS } from '@/lib/types';
-import { EDGE_MODE } from '@/lib/edge-mode';
+import { useDetectionView } from '@/lib/view-mode';
 
 export default function SettingsPage() {
+  const { isDetection } = useDetectionView();
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -72,12 +73,15 @@ export default function SettingsPage() {
   return (
     <div className="p-6 space-y-8 max-w-2xl">
       <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
+        <h1 className="text-2xl font-semibold">{isDetection ? 'Detection Settings' : 'Settings'}</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Global defaults applied when creating new cameras. Existing cameras are not affected.
+          {isDetection
+            ? 'Inference server, database, MQTT and detection defaults applied when creating new cameras. Existing cameras are not affected.'
+            : 'Dashboard name and live-stream settings. Detection pipeline settings live under Detection → Settings.'}
         </p>
       </div>
 
+      {!isDetection && (
       <Section title="Dashboard">
         <FormField label="Dashboard Name">
           <Input
@@ -86,33 +90,37 @@ export default function SettingsPage() {
             placeholder="EPiWalk"
           />
         </FormField>
-        {!EDGE_MODE && (
-          <FormField label="Hardware Mode">
-            <div className="flex gap-3 pt-1">
-              {(['jetson', 'server', 'cpu'] as const).map(mode => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setSettings(prev => ({ ...prev, hardwareMode: mode }))}
-                  className={`px-4 py-2 rounded-md text-sm border transition-colors ${
-                    settings.hardwareMode === mode
-                      ? 'border-primary bg-primary/10 text-primary font-medium'
-                      : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
-                  }`}
-                >
-                  {mode === 'jetson' ? 'Jetson / Tegra' : mode === 'server' ? 'Mini Server (runtime: nvidia)' : 'CPU Only'}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Changing this updates the Docker Compose template for all existing and new cameras,
-              including the Triton Inference Server service (jetson uses the -igpu image; cpu uses onnxruntime).
-            </p>
-          </FormField>
-        )}
       </Section>
+      )}
 
-      {!EDGE_MODE && (
+      {isDetection && (
+      <Section title="Hardware Mode">
+        <FormField label="Hardware Mode">
+          <div className="flex gap-3 pt-1">
+            {(['jetson', 'server', 'cpu'] as const).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setSettings(prev => ({ ...prev, hardwareMode: mode }))}
+                className={`px-4 py-2 rounded-md text-sm border transition-colors ${
+                  settings.hardwareMode === mode
+                    ? 'border-primary bg-primary/10 text-primary font-medium'
+                    : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+                }`}
+              >
+                {mode === 'jetson' ? 'Jetson / Tegra' : mode === 'server' ? 'Mini Server (runtime: nvidia)' : 'CPU Only'}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1.5">
+            Changing this updates the Docker Compose template for all existing and new cameras,
+            including the Triton Inference Server service (jetson uses the -igpu image; cpu uses onnxruntime).
+          </p>
+        </FormField>
+      </Section>
+      )}
+
+      {isDetection && (
       <Section title="Triton Inference Server">
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Triton Image Tag">
@@ -154,6 +162,7 @@ export default function SettingsPage() {
       </Section>
       )}
 
+      {!isDetection && (
       <Section title="Stream Gateway (MSE/HLS/WebRTC)">
         <FormField label="Public Base URL (optional)">
           <Input
@@ -172,8 +181,9 @@ export default function SettingsPage() {
           </p>
         </FormField>
       </Section>
+      )}
 
-      {!EDGE_MODE && (
+      {isDetection && (
       <Section title="PostgreSQL Database">
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Host">
@@ -195,7 +205,7 @@ export default function SettingsPage() {
       </Section>
       )}
 
-      {!EDGE_MODE && (
+      {isDetection && (
       <Section title="MQTT Broker">
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Broker Host">
@@ -231,7 +241,7 @@ export default function SettingsPage() {
       </Section>
       )}
 
-      {!EDGE_MODE && (
+      {isDetection && (
       <Section title="Detection Defaults">
         <div className="grid grid-cols-2 gap-4">
           <FormField label="YOLO Confidence">
@@ -267,7 +277,7 @@ export default function SettingsPage() {
       </Section>
       )}
 
-      {!EDGE_MODE && (
+      {isDetection && (
       <Section title="Additional Detection Defaults">
         <p className="text-xs text-muted-foreground -mt-2">
           Applied when a new camera is created. APD and Fire/Smoke are disabled
@@ -316,51 +326,6 @@ export default function SettingsPage() {
         </div>
       </Section>
       )}
-
-      <Section title="Additional Detection Defaults">
-        <p className="text-xs text-muted-foreground -mt-2">
-          Applied when a new camera is created. APD and Fire/Smoke are disabled
-          by default — enable them per camera once a model is selected.
-        </p>
-        <div className="grid grid-cols-2 gap-4">
-          <FormField label="People Counting Tag">
-            <TagSelect value={settings.defaults.people_counting_tag} onChange={v => setDefault('people_counting_tag', v)} />
-          </FormField>
-          <FormField label="APD Confidence">
-            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.apd_confidence} onChange={e => setDefault('apd_confidence', e.target.value)} />
-          </FormField>
-          <FormField label="APD Tag">
-            <TagSelect value={settings.defaults.apd_tag} onChange={v => setDefault('apd_tag', v)} />
-          </FormField>
-          <FormField label="Fire/Smoke Confidence">
-            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.fire_smoke_confidence} onChange={e => setDefault('fire_smoke_confidence', e.target.value)} />
-          </FormField>
-          <FormField label="Fire Tag">
-            <TagSelect value={settings.defaults.fire_tag} onChange={v => setDefault('fire_tag', v)} />
-          </FormField>
-          <FormField label="Smoke Tag">
-            <TagSelect value={settings.defaults.smoke_tag} onChange={v => setDefault('smoke_tag', v)} />
-          </FormField>
-          <FormField label="Fire/Smoke Cooldown (minutes)">
-            <Input type="number" min="1" value={settings.defaults.fire_smoke_cooldown_minutes} onChange={e => setDefault('fire_smoke_cooldown_minutes', e.target.value)} />
-          </FormField>
-          <FormField label="Face Confidence">
-            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.face_confidence} onChange={e => setDefault('face_confidence', e.target.value)} />
-          </FormField>
-          <FormField label="Face Match Threshold">
-            <Input type="number" step="0.05" min="0" max="1" value={settings.defaults.face_match_threshold} onChange={e => setDefault('face_match_threshold', e.target.value)} />
-          </FormField>
-          <FormField label="Insider Tag">
-            <TagSelect value={settings.defaults.insider_tag} onChange={v => setDefault('insider_tag', v)} />
-          </FormField>
-          <FormField label="Intruder Tag">
-            <TagSelect value={settings.defaults.intruder_tag} onChange={v => setDefault('intruder_tag', v)} />
-          </FormField>
-          <FormField label="Face Cache Refresh (minutes)">
-            <Input type="number" min="1" value={settings.defaults.face_cache_refresh_minutes} onChange={e => setDefault('face_cache_refresh_minutes', e.target.value)} />
-          </FormField>
-        </div>
-      </Section>
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving}>
