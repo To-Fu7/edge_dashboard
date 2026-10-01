@@ -31,19 +31,19 @@ def test_face_dedup():
     state.face_alerted_tracks.clear()
 
     # First sighting of track 3: label increment + unique_persons increment + mqtt = 3
-    face.process_detection(3, 'Jane', 'info', 0.82, (0, 0, 10, 10), _fake_frame())
+    face.process_detection(3, 'Jane', 'info', 0.82, _fake_frame())
     check("first verdict for a new track fires label + unique_persons + mqtt",
           len(calls) == 3, f"calls={calls}")
 
     # Same track again (even with a different verdict) is suppressed — one
     # verdict per track for its whole lifetime, not one per hour.
     calls.clear()
-    face.process_detection(3, 'intruder', 'alarm', 0.1, (0, 0, 10, 10), _fake_frame())
+    face.process_detection(3, 'intruder', 'alarm', 0.1, _fake_frame())
     check("repeat sighting of the same track is suppressed", len(calls) == 0, f"calls={calls}")
 
     # A different track fires independently.
     calls.clear()
-    face.process_detection(4, 'intruder', 'alarm', 0.2, (0, 0, 10, 10), _fake_frame())
+    face.process_detection(4, 'intruder', 'alarm', 0.2, _fake_frame())
     check("a different track still fires its own verdict",
           len(calls) == 3, f"calls={calls}")
 

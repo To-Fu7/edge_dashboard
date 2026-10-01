@@ -12,7 +12,7 @@ alive, the MJPEG stream shows "INFERENCE UNAVAILABLE", reconnection is retried
 with exponential backoff (1s → 30s), and the tracker is reset after reconnect so
 stale Kalman states can't produce phantom crossings.
 
-The legacy single-file implementation is preserved at legacy/main_legacy.py.
+The legacy single-file (pre-Triton) implementation lives in git history (legacy/main_legacy.py, removed after the Triton migration).
 """
 import datetime
 import logging
