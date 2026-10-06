@@ -8,7 +8,8 @@ Satu repo untuk tiga komponen yang jalan berdampingan di satu host:
 | **Stream gateway** | [`stream-gateway/`](stream-gateway/) | Service Go: ambil RTSP tiap kamera **sekali**, sajikan ulang ke browser sebagai HLS / MSE / WebRTC | dijelaskan di [dashboard/README.md](dashboard/README.md#stream-gateway) |
 | **Python counting** | [`python-counting/`](python-counting/) | Container per kamera (thin client CPU) + Triton Inference Server (GPU): person counting, APD, fire/smoke, face, intrusion | [python-counting/README.md](python-counting/README.md) |
 
-Pendukung: [`python-counting/models/README.md`](python-counting/models/README.md)
+Pendukung: [`python-counting/SYSTEM.md`](python-counting/SYSTEM.md)
+(cara kerja pipeline per modul), [`python-counting/models/README.md`](python-counting/models/README.md)
 (model repository Triton), [`nodered-flows/`](nodered-flows/) (contoh flow
 Node-RED), [`docs/superpowers/specs/`](docs/superpowers/specs/) (dokumen desain).
 

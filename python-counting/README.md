@@ -9,6 +9,7 @@ Container kamera dibuat, dikonfigurasi, dan dinyalakan oleh dashboard (area
 **Detection**, lihat [../dashboard/README.md](../dashboard/README.md)). File ini
 menjelaskan cara kerja pipeline, setup model, env, tools, dan troubleshooting.
 
+- **Cara kerja sistem per modul (untuk manusia & AI): [SYSTEM.md](SYSTEM.md)**
 - Model repository Triton: [models/README.md](models/README.md)
 - Windows/WSL2: [docs/windows-wsl2.md](docs/windows-wsl2.md)
 
