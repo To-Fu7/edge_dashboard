@@ -14,20 +14,25 @@ Arsitektur keseluruhan: [../README.md](../README.md). Pipeline deteksi:
 
 ---
 
-## 1. Dua area
+## 1. Navigasi
 
-| Area | Sidebar | Route | Isi |
+Sidebar: tiga item utama, lalu dua dropdown (**Detection** dan **Settings**)
+yang otomatis terbuka saat halaman di dalamnya sedang aktif.
+
+| Grup | Item | Route | Isi |
 |---|---|---|---|
 | **Utama** | Stream | `/stream` | Grid live view lewat stream-gateway (HLS/MSE/WebRTC) |
 | | Devices | `/devices`, `/devices/[code]` | Kamera: nama, kode, RTSP URL, tab **Stream** (expose via gateway, port forward) |
-| | Logs | `/logs` | Log container |
-| | Settings | `/settings` | Nama dashboard, Stream Gateway |
-| **Detection** | Dashboard | `/detection` | Status Triton, kartu GPU (util, **power W/limit (%)**, VRAM), ringkasan device |
+| | Automation | `/automation` | Editor Node-RED yang di-embed (§7) |
+| **Detection** ▾ | Dashboard | `/detection` | Status Triton, kartu GPU (util, **power W/limit (%)**, VRAM), ringkasan device |
 | | Devices | `/detection/devices`, `/detection/devices/[code]` | Konfigurasi deteksi: model, counting, APD/fire-smoke/face/intrusion, MQTT topic; tab **Lines** (gambar line/zone) dan **Logs**; kontrol container |
 | | Face Enrollment | `/faces` | Upload foto → augmentasi → embed via Triton → `known_faces` |
 | | Build & Inference | `/inference` | Model repository, export ONNX, build engine, status Triton |
 | | Model Test | `/model-test` | Jalankan model pada video uji dan lihat hasilnya |
 | | Settings | `/detection/settings` | Hardware mode, Triton (image tag, default model, embed model), PostgreSQL, MQTT, detection defaults |
+| **Settings** ▾ | General | `/settings` | Nama dashboard, Stream Gateway |
+| | Logs | `/settings/logs` | Log semua container kamera (`/logs` redirect ke sini) |
+| | Nginx | `/settings/nginx` | Status `edge-portfwd-nginx`, daftar forward, config live vs generated, redeploy, log container (§4) |
 
 `/` redirect ke `/stream`. Halaman `devices` dan `settings` dipakai bersama
 oleh kedua area. Route `/detection/...` hanya me-re-export halaman yang sama,
@@ -108,6 +113,8 @@ atau sajikan dashboard lewat HTTPS/HTTP2.
 
 Tab Stream di device: isi `PORTFWD_*`. Dashboard membuat ulang seluruh
 `nginx/portfwd-nginx.conf` dari semua device, lalu reload `edge-portfwd-nginx`.
+Settings → Nginx menampilkan semua forward, membandingkan config yang sedang
+jalan dengan hasil generate, dan punya tombol **Redeploy config**.
 Rentang 5500–5600 sudah dipublish, jadi menambah forward tidak perlu recreate
 container. Kalau ada container lain yang memakai port di rentang itu, geser
 rentangnya di compose **dan** `LISTEN_PORT_MIN/MAX` di `lib/portforward.ts`.
@@ -139,16 +146,16 @@ Bar power merah saat ≥ 90% limit, yang berarti GPU sudah penuh.
 
 ---
 
-## 7. Automation (Node-RED) — nonaktif
+## 7. Automation (Node-RED)
 
-Integrasi Node-RED (editor di-embed di `/automation` lewat reverse proxy
-`server.js`, HTTP + WebSocket) sedang **dimatikan**. Untuk mengaktifkannya
-lagi:
+Halaman `/automation` meng-embed editor Node-RED dalam `<iframe src="/nodered/">`.
+`server.js` mem-proxy `/nodered/*` (HTTP **dan** WebSocket, untuk panel debug
+dan status deploy live) ke container `nodered`. Node yang di-install lewat
+"Manage palette" tersimpan di volume `nodered-data`.
 
-1. Set `NODERED_ENABLED = true` di `server.js`.
-2. Uncomment service `nodered` dan volume `nodered-data` di `docker-compose.yml`.
-3. Uncomment `NODERED_URL` di service dashboard.
-4. Uncomment item Automation di `components/Sidebar.tsx`.
+Untuk mematikan: set `NODERED_ENABLED = false` di `server.js`, comment service
+`nodered` (dan `depends_on`/`NODERED_URL` di service dashboard) di
+`docker-compose.yml`, dan hapus item Automation di `components/Sidebar.tsx`.
 
 Node-RED berjalan tanpa login (`adminAuth` kosong). Flow bisa menjalankan
 kode di server, jadi tambahkan `adminAuth` di `nodered/settings.js` sebelum

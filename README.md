@@ -38,13 +38,15 @@ Node-RED), [`docs/superpowers/specs/`](docs/superpowers/specs/) (dokumen desain)
 
 Dashboard punya **dua area** di sidebar:
 
-- **Utama** — `Stream`, `Devices`, `Logs`, `Settings`. Kamera sebagai *source*:
-  RTSP URL, live view lewat stream-gateway, port forward. Bisa dipakai tanpa
-  pipeline deteksi sama sekali.
-- **Detection** — `Dashboard` (`/detection`), `Devices`, `Face Enrollment`,
+- **Utama** — `Stream`, `Devices`, `Automation` (Node-RED). Kamera sebagai
+  *source*: RTSP URL, live view lewat stream-gateway, port forward. Bisa
+  dipakai tanpa pipeline deteksi sama sekali.
+- **Detection** (dropdown) — `Dashboard` (`/detection`), `Devices`, `Face Enrollment`,
   `Build & Inference`, `Model Test`, `Settings`. Semua yang berhubungan dengan
   python-counting + Triton: konfigurasi deteksi per kamera, gambar line/zone,
   log & kontrol container, model, hardware mode, DB, MQTT.
+- **Settings** (dropdown) — `General`, `Logs` (log semua container kamera),
+  `Nginx` (port-forward proxy: forward, config, redeploy, log).
 
 Halaman device dan settings dipakai bersama oleh kedua area; isinya
 menyesuaikan path (`/devices/...` vs `/detection/devices/...`).

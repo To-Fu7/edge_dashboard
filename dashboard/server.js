@@ -1,13 +1,5 @@
 // Custom Next.js server.
 //
-// --- Node-RED "Automation" integration: TEMPORARILY DISABLED ---
-// See nodered/DEV_NOTES.md (gitignored) for current status/why. To
-// re-enable: flip NODERED_ENABLED to true below, uncomment the `nodered`
-// service in docker-compose.yml (and the dashboard service's `depends_on`/
-// `NODERED_URL` lines), and uncomment the nav item in components/Sidebar.tsx.
-// Everything else here (the proxy logic itself) is left intact rather than
-// deleted so re-enabling is a one-line flip, not a rewrite.
-//
 // Proxies /nodered/* (HTTP + WebSocket) to the Node-RED container so it
 // appears under the dashboard's own origin/port instead of a separate port,
 // then hands everything else to Next's own request handler. WebSocket
@@ -26,9 +18,9 @@
 // — a hand-written server.js and Next's own generated standalone server are
 // two different, non-combinable deployment modes; this is the standard
 // custom-server pattern (https://nextjs.org/docs/app/building-your-application/configuring/custom-server).
-// Kept even while Node-RED is disabled since reverting it and setting it back
-// up again later would just be repeated work for a currently-inert file.
-const NODERED_ENABLED = false;
+// Flip to false to turn the Node-RED proxy off (also comment out the `nodered`
+// service in docker-compose.yml and the Automation item in Sidebar.tsx).
+const NODERED_ENABLED = true;
 
 const { createServer } = require('http');
 const { parse } = require('url');

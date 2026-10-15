@@ -127,10 +127,29 @@ export interface DeployResult {
 // of dashboard-managed forwards, validates the candidate with `nginx -t`
 // BEFORE touching the live file, and only then swaps it in and reloads. An
 // invalid candidate never reaches the real nginx.conf path.
-export async function deployPortForwardConfig(): Promise<DeployResult> {
+export function getForwarderTarget(): { containerName: string; configPath: string } {
   const settings = readSettings();
-  const containerName = settings.portForward?.nginxContainerName || DEFAULT_NGINX_CONTAINER;
-  const configPath = settings.portForward?.nginxConfigPath || DEFAULT_NGINX_CONFIG_PATH;
+  return {
+    containerName: settings.portForward?.nginxContainerName || DEFAULT_NGINX_CONTAINER,
+    configPath: settings.portForward?.nginxConfigPath || DEFAULT_NGINX_CONFIG_PATH,
+  };
+}
+
+// The config nginx is actually running with (read from inside the container),
+// or null when the forwarder isn't reachable. Compared against
+// buildNginxConf(collectPortForwards()) to show whether a redeploy is pending.
+export async function readLiveNginxConf(): Promise<string | null> {
+  const { containerName, configPath } = getForwarderTarget();
+  try {
+    const { stdout } = await execAsync(`docker exec ${containerName} cat "${configPath}"`, { timeout: 10000 });
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+export async function deployPortForwardConfig(): Promise<DeployResult> {
+  const { containerName, configPath } = getForwarderTarget();
   const candidatePath = `${configPath}.candidate`;
 
   const newConf = buildNginxConf(collectPortForwards());
