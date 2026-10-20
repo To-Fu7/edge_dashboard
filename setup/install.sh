@@ -408,6 +408,7 @@ step_prereq() {
       fi
       ok "NVIDIA container runtime present (JetPack $JETPACK)"
       check_iptables_raw
+      check_jetson_libs
       ;;
     cpu)
       info "CPU mode: skipping GPU checks."
@@ -434,6 +435,23 @@ step_prereq() {
   mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
   [ "$mem_gb" -lt 15 ] && warn "Only ${mem_gb} GB RAM — 16 GB or more is recommended."
   ok "Memory: ${mem_gb} GB"
+}
+
+# Triton's -igpu image gets Tegra libraries from the host via the NVIDIA runtime
+# (CSV mode). On minimal JetPack installs (no nvidia-jetpack metapackage)
+# libnvdla_compiler.so is missing, and TensorRT 10 can't load its plugins:
+# "Unable to open library: libnvinfer_plugin.so.10 due to libnvdla_compiler.so".
+check_jetson_libs() {
+  local lib=/usr/lib/aarch64-linux-gnu/nvidia/libnvdla_compiler.so l4t
+  [ -e "$lib" ] && { ok "Tegra TensorRT libraries present"; return; }
+  l4t=$(dpkg-query -W -f='${Version}' nvidia-l4t-core 2>/dev/null || true)
+  [ -n "$l4t" ] || die "$lib is missing and the L4T version is unknown" "Install nvidia-l4t-dla-compiler matching your L4T release."
+  info "Missing $lib (package nvidia-l4t-dla-compiler) — TensorRT engine builds would fail."
+  confirm "Install nvidia-l4t-dla-compiler=$l4t (same version as your L4T, nothing else is upgraded)?" \
+    || die "Missing $lib" "sudo apt-get install -y nvidia-l4t-dla-compiler=$l4t"
+  sudo apt-get install -y "nvidia-l4t-dla-compiler=$l4t" \
+    || die "Could not install nvidia-l4t-dla-compiler=$l4t" "sudo apt-get update, then retry; check the JetPack apt repo is configured."
+  ok "Installed nvidia-l4t-dla-compiler $l4t"
 }
 
 # Docker 28+ adds "direct access filtering" rules to the iptables raw table.
@@ -710,6 +728,7 @@ step_models() {
 
 step_engines() {
   if [ "$HARDWARE_MODE" = cpu ]; then info "CPU mode: no TensorRT engines, Triton uses onnxruntime."; return; fi
+  [ "$HARDWARE_MODE" = jetson ] && check_jetson_libs
   info "Building TensorRT engines on this GPU (several minutes per model)..."
   compose_pc --profile build run --rm triton-model-builder
   local failed=()

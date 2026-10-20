@@ -137,6 +137,7 @@ Cek batch dilakukan setelah Triton jalan, di [05-triton.md](05-triton.md#verifik
 | Export lambat / `Killed` | RAM habis saat export | Tutup proses lain; export di mesin lain lalu salin folder hasilnya |
 | `make_uint8_input.py`: `FileNotFoundError ... metadata.json` | `--src` bukan folder hasil export | Arahkan ke folder yang berisi `1/model.onnx` dan `metadata.json` |
 | Builder: `set: pipefail: invalid option` | `build_engine.sh` ter-checkout dengan line ending CRLF (Windows) | `sed -i 's/\r$//' tools/build_engine.sh`, atau `git config core.autocrlf false` lalu checkout ulang |
+| Jetson, builder: `Unable to open library: libnvinfer_plugin.so.10 due to libnvdla_compiler.so: cannot open shared object file` | Paket `nvidia-l4t-dla-compiler` tidak terpasang (instalasi JetPack minimal). Image Triton `-igpu` mengambil library ini dari host lewat runtime NVIDIA | `sudo apt-get install -y nvidia-l4t-dla-compiler=$(dpkg-query -W -f='${Version}' nvidia-l4t-core)` (versi sama dengan L4T, tidak meng-upgrade yang lain), lalu build ulang. Installer terbaru mengecek ini sendiri |
 | Builder: `trtexec: command not found` | Image builder bukan image Triton | Jalankan lewat `docker compose --profile build run` (bukan `docker run` image lain) |
 | Builder gagal `out of memory` | VRAM habis karena Triton sedang jalan | `docker compose stop triton`, build, lalu start lagi |
 | Builder melewati model ("up to date") padahal mau rebuild | `model.plan` lebih baru dari `model.onnx` | Pakai `-e FORCE_BUILD=1` |
