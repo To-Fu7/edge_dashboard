@@ -175,6 +175,27 @@ PY
 
 get_env_var() { grep -m1 "^$2=" "$1" 2>/dev/null | cut -d= -f2- || true; }
 
+# ------------------------------------------------------------------ sudo ----
+# Ask for the sudo password once up front (Docker, NVIDIA toolkit, apt, docker
+# group all need it), then keep the timestamp fresh so a long build doesn't
+# stop halfway for a password prompt.
+SUDO_KEEPALIVE_PID=""
+acquire_sudo() {
+  [ "$(id -u)" = 0 ] && return
+  command -v sudo >/dev/null || die "sudo is not installed" "Run this script as root, or install sudo."
+  if ! sudo -n true 2>/dev/null; then
+    if ! $INTERACTIVE; then
+      warn "No cached sudo credentials and no terminal — steps that need sudo will fail. Run 'sudo -v' first or use passwordless sudo."
+      return
+    fi
+    echo "${C_B}Administrator rights are needed (Docker, NVIDIA runtime, packages).${C_0} Enter your password once:"
+    sudo -v || die "sudo authentication failed" "Use an account that can run sudo, or run this script as root."
+  fi
+  ( while kill -0 $$ 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
+  SUDO_KEEPALIVE_PID=$!
+}
+trap '[ -n "$SUDO_KEEPALIVE_PID" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null; true' EXIT
+
 # ---------------------------------------------------------------- docker ----
 DOCKER=(docker)
 dk() { "${DOCKER[@]}" "$@"; }
@@ -301,7 +322,16 @@ step_prereq() {
   fi
   resolve_docker || die "Cannot talk to the Docker daemon" \
     "Start it (sudo systemctl start docker, or open Docker Desktop) and make sure your user can run 'docker info'."
-  [ "${DOCKER[0]}" = sudo ] && warn "Running docker through sudo for this install (user not in the docker group yet)."
+  if [ "${DOCKER[0]}" = sudo ] && [ "$(id -u)" != 0 ]; then
+    if id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
+      warn "$USER is in the docker group but this session predates it — log out and back in to use docker without sudo."
+    elif confirm "Add $USER to the docker group so docker works without sudo (after re-login)?"; then
+      sudo usermod -aG docker "$USER"
+      warn "Added $USER to the docker group — log out and back in for it to take effect. This run keeps using sudo."
+    else
+      warn "Running docker through sudo for this install (user not in the docker group)."
+    fi
+  fi
   dk compose version >/dev/null 2>&1 || die "Docker Compose v2 plugin not found" \
     "sudo apt-get install -y docker-compose-plugin"
   ok "Docker $(dk version --format '{{.Server.Version}}'), $(dk compose version --short 2>/dev/null || echo compose v2)"
@@ -706,6 +736,7 @@ done
 
 detect_platform
 print_platform
+acquire_sudo
 # shellcheck disable=SC1090
 [ -f "$ANSWERS_FILE" ] && source "$ANSWERS_FILE"
 touch "$STATE_FILE"

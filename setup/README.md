@@ -28,6 +28,9 @@ Installer mendeteksi platform sendiri, lalu menjalankan langkah 0–8 di bawah:
 
 Yang dilakukan installer:
 
+- **Minta password sudo sekali di awal**, lalu menjaganya tetap aktif selama
+  instalasi (tidak berhenti di tengah build untuk minta password). Kalau user
+  belum di grup `docker`, installer menawarkan menambahkannya.
 - **Cek & perbaiki prasyarat**: Docker, Compose, driver NVIDIA, NVIDIA
   Container Toolkit + CDI, tes GPU di container, ruang disk ≥ 40 GB, peringatan
   kalau data ada di HDD, RAM, dan port yang bentrok. Instalasi paket selalu
