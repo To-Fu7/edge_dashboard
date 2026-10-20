@@ -104,16 +104,19 @@ services:
     networks:
       - envisions
 
+  # Multi-arch (amd64 + arm64/Jetson). The -ha image is amd64-only and dies with
+  # "exec format error" on Jetson. Data lives at /var/lib/postgresql/data here
+  # (the -ha image used /home/postgres/pgdata/data).
   timescaledb:
     container_name: env_services_timescaledb
-    image: timescale/timescaledb-ha:pg14-latest
+    image: timescale/timescaledb:latest-pg14
     restart: unless-stopped
     ports:
       - "5435:5432"
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - timescaledb_volume:/home/postgres/pgdata/data
+      - timescaledb_volume:/var/lib/postgresql/data
     networks:
       - envisions
     extra_hosts:

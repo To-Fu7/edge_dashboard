@@ -235,6 +235,21 @@ existing_container_target() {  # existing_container_target NAME INTERNAL_PORT â†
   fi
 }
 
+# A single-arch image for the wrong CPU (e.g. an amd64-only image on Jetson)
+# starts and then restart-loops with "exec format error" â€” catch it by name.
+check_container_arch() {  # check_container_arch CONTAINER...
+  local host_arch c img arch
+  host_arch=$(dk version --format '{{.Server.Arch}}')
+  for c in "$@"; do
+    img=$(dk inspect -f '{{.Config.Image}}' "$c" 2>/dev/null) || continue
+    arch=$(dk image inspect -f '{{.Architecture}}' "$img" 2>/dev/null || true)
+    if [ -n "$arch" ] && [ "$arch" != "$host_arch" ]; then
+      die "$c uses image $img built for $arch, but this machine is $host_arch" \
+        "Use a multi-arch image (pull the right variant with: docker compose pull), or pick an image that publishes $host_arch."
+    fi
+  done
+}
+
 wait_for() {  # wait_for SECONDS "what" command...
   local timeout=$1 what=$2; shift 2
   local start=$SECONDS
@@ -586,7 +601,10 @@ step_infra() {
   $USE_BUNDLED_MQTT && svcs+=(mqtt)
   if ((${#svcs[@]})); then
     info "Starting ${svcs[*]}..."
+    compose_dash pull "${svcs[@]}"
     compose_dash up -d "${svcs[@]}"
+    $USE_BUNDLED_DB && check_container_arch env_services_timescaledb
+    $USE_BUNDLED_MQTT && check_container_arch env_services_mqtt
   fi
 
   if $USE_BUNDLED_DB; then
@@ -631,6 +649,7 @@ step_dashboard() {
   $USE_BUNDLED_MQTT && svcs+=(mqtt)
   info "Building and starting ${svcs[*]} (first build takes a few minutes)..."
   compose_dash up -d --build "${svcs[@]}"
+  check_container_arch edge-dashboard stream-gateway edge-portfwd-nginx nodered
   wait_for 240 "Dashboard is answering on :3001" curl -fsS http://localhost:3001/api/settings \
     || { compose_dash logs --tail 40 dashboard || true
          die "Dashboard did not come up" "See the dashboard log above (docker compose logs dashboard in dashboard/)."; }

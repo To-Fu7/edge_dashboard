@@ -79,6 +79,7 @@ Log `init_db.py` diakhiri dengan `Schema is up to date (...)`.
 | Gejala | Penyebab | Solusi |
 |---|---|---|
 | `Conflict. The container name "/env_services_timescaledb" is already in use` | Sudah ada PostgreSQL dengan nama itu (dari stack lain) | Pakai Opsi B. Jalankan service dashboard tanpa `timescaledb`: `docker compose up -d dashboard stream-gateway edge-portfwd-nginx nodered` |
+| `docker logs env_services_timescaledb`: `exec /docker-entrypoint.sh: exec format error`, container restart terus | Image untuk arsitektur CPU lain (mis. `timescaledb-ha` yang hanya amd64, dijalankan di Jetson/ARM) | Pakai image multi-arch `timescale/timescaledb:latest-pg14` (default compose sekarang), lalu `docker compose pull timescaledb && docker compose up -d --force-recreate timescaledb`. Kalau volume lama sudah berisi data dari image `-ha`, dump dulu (`pg_dumpall`) sebelum ganti image |
 | `refers to undefined volume timescaledb_volume` | Volume belum dideklarasikan di bagian `volumes:` compose | Pastikan `timescaledb_volume:` ada di bagian `volumes:` paling bawah |
 | `The "POSTGRES_PASSWORD" variable is not set` lalu container DB gagal init | `.env` belum berisi `POSTGRES_PASSWORD` | Isi di `dashboard/.env`, lalu `docker compose up -d timescaledb` |
 | `password authentication failed for user "postgres"` | Password salah, atau volume sudah berisi DB lama dengan password lain | Pakai password lama. Untuk mulai dari nol: `docker compose down` lalu `docker volume rm dashboard_timescaledb_volume` (**menghapus semua data**) |
