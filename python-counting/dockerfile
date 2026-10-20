@@ -1,7 +1,6 @@
 # Thin Triton-client image — no CUDA, no torch, no custom ffmpeg/OpenCV builds.
 # Inference runs on the shared Triton server (see docker-compose.yml); this
 # container only decodes video, tracks, counts, and publishes results.
-# Legacy CUDA image preserved at legacy/dockerfile_legacy.
 FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -17,7 +16,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY main.py counting.py counting_config.py app_state.py lifecycle.py ./
+COPY main.py capture.py counting.py counting_config.py app_state.py lifecycle.py init_db.py ./
+COPY detection/ ./detection/
 COPY inference/ ./inference/
 COPY tracking/ ./tracking/
 COPY outputs/ ./outputs/

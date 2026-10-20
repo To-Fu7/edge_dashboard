@@ -72,55 +72,30 @@ menyesuaikan path (`/devices/...` vs `/detection/devices/...`).
 
 ---
 
-## 2. Prasyarat
+## 2. Setup
 
-| Komponen | Keterangan |
+Panduan lengkap ada di folder **[`setup/`](setup/)**: pre-setup (driver,
+Docker, GPU di container, NVMe), database, MQTT, image, model, Triton,
+dashboard, tambah kamera, dan checklist verifikasi. Tiap langkah punya
+bagian **Kalau error**.
+
+Urutan singkat:
+
+| # | Langkah |
 |---|---|
-| Linux + Docker Engine + Compose v2 | Semua service jalan sebagai container di network bersama `envisions` |
-| GPU NVIDIA + driver + `nvidia-container-toolkit` | Untuk Triton (`runtime: nvidia`). Mode CPU memakai onnxruntime |
-| PostgreSQL / TimescaleDB | Di produksi: container `env_services_timescaledb`, host port **5435** |
-| MQTT broker | Port 1883 |
-| **Penyimpanan SSD/NVMe** untuk `/opt/ai` + data Docker | HDD terbukti bikin semua kamera stall (journal ext4). Lihat troubleshooting |
-| Node.js 20+ | Hanya untuk development dashboard di luar Docker |
-
-Windows/WSL2: [python-counting/docs/windows-wsl2.md](python-counting/docs/windows-wsl2.md).
-
----
-
-## 3. Setup dari nol (urutan)
-
-```bash
-git clone <repo> && cd v3-dashboard
-
-# 1. Database (sekali, idempotent)
-cd python-counting
-PG_HOST=<host> PG_PORT=5435 PG_DB=postgres PG_USER=postgres PG_PASS=<pass> python init_db.py
-
-# 2. Model: export ONNX → tambah input uint8 → build TensorRT → cek batch
-#    (perintah lengkap: python-counting/README.md § Setup model)
-
-# 3. Triton
-docker compose up -d triton
-curl -s localhost:8000/v2/health/ready -o /dev/null -w '%{http_code}\n'   # 200
-
-# 4. Image kamera (dipakai semua container kamera; kode di-bind-mount ke /app,
-#    jadi update kode cukup git pull + restart container, tanpa rebuild)
-docker build -t python-counting-services-python-1:latest .
-
-# 5. Dashboard + stream-gateway
-cd ../dashboard
-cp .env.example .env        # isi HOST_PYTHON_COUNTING_DIR (path ABSOLUT di host)
-docker compose up -d --build
-# → http://<host>:3001
-
-# 6. Di dashboard: Detection → Settings (Triton, PostgreSQL, MQTT, default model)
-#    lalu Devices → Add Camera. Dashboard menulis .env_<CODE>, menambah service
-#    ke python-counting/docker-compose.yml, dan menyalakan container-nya.
-```
+| 0 | [Pre-setup](setup/00-pre-setup.md) |
+| 1 | [Database](setup/01-database.md) |
+| 2 | [MQTT](setup/02-mqtt.md) |
+| 3 | [Build image](setup/03-images.md) |
+| 4 | [Model](setup/04-models.md) |
+| 5 | [Triton](setup/05-triton.md) |
+| 6 | [Dashboard](setup/06-dashboard.md) |
+| 7 | [Tambah kamera](setup/07-add-camera.md) |
+| 8 | [Verifikasi](setup/08-verification.md) |
 
 ---
 
-## 4. Operasional
+## 3. Operasional
 
 - **Deploy:** commit + push dari laptop → `git pull` di server → restart/recreate
   container terkait. Perubahan `.env_<code>` butuh *recreate*

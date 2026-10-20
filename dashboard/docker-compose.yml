@@ -10,6 +10,10 @@ services:
     memswap_limit: 4g
     ports:
       - "3001:3000"
+    # Same as the camera containers: lets Settings → PostgreSQL use
+    # host.docker.internal (the default) for Face Enrollment's DB access.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # runtime: nvidia
     volumes:
       - ../python-counting:/python-counting
@@ -99,9 +103,40 @@ services:
                         # over the envisions network in normal use
     networks:
       - envisions
+
+  timescaledb:
+    container_name: env_services_timescaledb
+    image: timescale/timescaledb-ha:pg14-latest
+    restart: unless-stopped
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - timescaledb_volume:/home/postgres/pgdata/data
+    networks:
+      - envisions
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: env_services_mqtt
+    ports:
+      - "1884:1883"
+      - "9001:9001"
+    networks:
+      - envisions
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
 volumes:
   dashboard-data:
   nodered-data:
+  timescaledb_volume:
 networks:
   default: {}
   envisions:

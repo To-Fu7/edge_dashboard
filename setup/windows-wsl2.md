@@ -1,5 +1,11 @@
 # Windows / Docker Desktop (WSL2) Limitations
 
+> **Catatan dari arsitektur lama** (sebelum Triton, saat inference jalan di
+> dalam container kamera dengan torch + NVDEC). Bagian decode CPU/RAM masih
+> relevan karena container kamera tetap decode video di CPU; bagian
+> NVDEC/TensorRT export di dalam container kamera sudah tidak berlaku.
+> Target deployment yang didukung adalah Linux (lihat [00-pre-setup.md](00-pre-setup.md)).
+
 Catatan keterbatasan saat menjalankan service python-counting di **Windows 11 + Docker
 Desktop (WSL2 backend)** dengan GPU **NVIDIA RTX A2000 12GB**. Semua masalah di bawah
 ditemukan saat deploy 9 container CCTV (services-python-cctv-01..09).

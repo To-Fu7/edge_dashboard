@@ -59,3 +59,6 @@ docker-compose.yml
 dockerfile-subbranch
 pull_model.sh
 RESAMPLE_DB_IMPL.md
+# bundled mosquitto runtime state
+/mosquitto/data/
+/mosquitto/log/

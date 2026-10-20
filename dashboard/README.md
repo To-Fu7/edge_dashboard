@@ -42,36 +42,24 @@ device punya link silang "Detection settings" ↔ "Stream settings".
 
 ---
 
-## 2. Setup (Docker, disarankan)
+## 2. Setup
 
-Struktur folder harus dipertahankan: compose me-mount `../python-counting` dan
-build `../stream-gateway`.
-
-```bash
-cd dashboard
-cp .env.example .env
-#   HOST_PYTHON_COUNTING_DIR=/opt/ai/<repo>/python-counting   ← path ABSOLUT di HOST
-docker compose up -d --build
-```
+Langkah lengkap (`.env`, `docker compose up -d --build`, settings global,
+verifikasi, dan tabel error): [`../setup/06-dashboard.md`](../setup/06-dashboard.md).
+Tambah kamera: [`../setup/07-add-camera.md`](../setup/07-add-camera.md).
 
 | Service | Port host | Peran |
 |---|---|---|
 | `dashboard` (`edge-dashboard`) | **3001** → 3000 | UI + API. Volume `dashboard-data` → `/app/data` (`settings.json`, foto wajah) |
 | `stream-gateway` | 8555/tcp, 8189/udp | RTSP → HLS/MSE/WebRTC (lihat §3) |
 | `edge-portfwd-nginx` | 5500–5600/tcp | L4 TCP proxy untuk port forward RTSP; config dibuat ulang dashboard |
+| `nodered` | 1880 | Editor Automation, di-embed lewat `/nodered` (§7) |
+| `timescaledb` (`env_services_timescaledb`) | 5435 → 5432 | PostgreSQL bawaan (opsional). Password dari `POSTGRES_PASSWORD` di `.env` |
+| `mqtt` (`env_services_mqtt`) | 1884 → 1883, 9001 | Mosquitto bawaan (opsional). Config di `mosquitto/config/mosquitto.conf` |
 
-Semua service terhubung ke network `envisions` (bersama Triton dan container
-kamera).
-
-**`HOST_PYTHON_COUNTING_DIR` wajib benar.** Dashboard menjalankan
-`triton-model-builder`/`yolo-export` sebagai container sibling lewat
-docker.sock. Bind mount mereka di-resolve oleh daemon di host. Kalau path
-salah, Docker diam-diam me-mount folder kosong dan build gagal dengan error
-"file not found".
-
-Setelah start: buka `http://<host>:3001` → Detection → Settings (Triton,
-PostgreSQL, MQTT, default model `yolo26s_640_e2e_u8`) → Detection → Devices →
-Add Camera.
+Settings global PostgreSQL, MQTT, dan Debug Mode disalin ke `.env_<CODE>`
+**saat kamera dibuat**; mengubahnya belakangan tidak mengubah kamera yang
+sudah ada.
 
 ### Development tanpa Docker
 

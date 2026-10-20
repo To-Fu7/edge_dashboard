@@ -11,7 +11,7 @@ menjelaskan cara kerja pipeline, setup model, env, tools, dan troubleshooting.
 
 - **Cara kerja sistem per modul (untuk manusia & AI): [SYSTEM.md](SYSTEM.md)**
 - Model repository Triton: [models/README.md](models/README.md)
-- Windows/WSL2: [docs/windows-wsl2.md](docs/windows-wsl2.md)
+- **Setup dari nol + penanganan error: [../setup/](../setup/)**
 
 ---
 
@@ -68,124 +68,21 @@ JPEG tidak menahan loop).
 
 ## 2. Setup
 
-### 2.1 Database
+Semua langkah setup dipindah ke folder [`../setup/`](../setup/):
 
-```bash
-PG_HOST=<host> PG_PORT=5435 PG_DB=postgres PG_USER=postgres PG_PASS=<pass> python init_db.py
-```
-
-| Tabel | Isi |
+| Bagian | File |
 |---|---|
-| `person_inout` | Total harian per device |
-| `inout_resample` | Per jam (`interval_in/out`), **`hour_start` disimpan UTC**, 24 row/hari dipregenerate |
-| `apd_hourly` / `firesmoke_hourly` / `face_hourly` / `intrusion_hourly` | Satu row per (device, jam), counter di `data JSONB`, mis. `{"NO-Hardhat": 10, "unique_persons": 8}` |
-| `known_faces` | Roster wajah: `person_name`, `embedding REAL[512]`, `variant_type` (satu orang = banyak varian augmentasi) |
+| Database (`init_db.py`, tabel) | [01-database.md](../setup/01-database.md) |
+| Image kamera + image export | [03-images.md](../setup/03-images.md) |
+| Model: export → uint8 → TensorRT, model APD/fire/face/ArcFace, batching | [04-models.md](../setup/04-models.md) |
+| Triton + `batch_check.py` | [05-triton.md](../setup/05-triton.md) |
+| Tambah kamera, urutan log yang benar, error container kamera | [07-add-camera.md](../setup/07-add-camera.md) |
 
-Increment memakai `jsonb_set(... +1)` dengan label sebagai bound parameter.
-Tabel hourly deteksi tambahan hanya dipregenerate kalau fiturnya enabled.
+Daftar tabel dan kapan ditulis: [SYSTEM.md §4](SYSTEM.md#4-data-yang-dihasilkan).
 
-### 2.2 Model (person counting)
-
-Model produksi: **`yolo26s_640_e2e_u8`** (default dashboard) dan
-**`yolo26s_1280_e2e_u8`** untuk kamera yang butuh resolusi tinggi (mis. gate
-dengan orang kecil/berdempetan). Nama: `<weights>_<imgsz>_e2e_u8`.
-
-```bash
-cd python-counting
-
-# 1. Image export (satu-satunya image ber-torch)
-docker build -f tools/Dockerfile.export -t yolo-export tools/
-
-# 2. Export ONNX end-to-end (NMS-free, aman untuk batching).
-#    Taruh di luar models/ dulu — Triton me-load SEMUA folder di models/.
-mkdir -p ../model-sources
-docker run --rm -v "$(pwd)/..:/work" yolo-export \
-  --weights /work/python-counting/yolo26s.pt --imgsz 640 \
-  --name yolo26s_640_e2e --out-dir /work/model-sources
-
-# 3. Tambah input uint8 NHWC (Cast→/255→Transpose di dalam graph)
-docker run --rm -v "$(pwd)/..:/work" --entrypoint python yolo-export \
-  /work/python-counting/tools/make_uint8_input.py \
-  --src /work/model-sources/yolo26s_640_e2e --dst /work/python-counting/models/yolo26s_640_e2e_u8
-
-# 4. Build TensorRT engine di device ini (baca imgsz + input_layout dari metadata.json)
-docker compose --profile build run --rm triton-model-builder
-docker compose restart triton
-curl -s -X POST localhost:8000/v2/repository/index      # semua model READY
-
-# 5. WAJIB: cek batch — semua frame dalam satu batch harus dapat deteksi
-docker run --rm --network envisions -v "$(pwd):/app" -w /app \
-  python-counting-services-python-1:latest \
-  python tools/batch_check.py --model yolo26s_640_e2e_u8 frames/a.jpg frames/b.jpg frames/c.jpg
-```
-
-Setelah build, cek `models/<model>/config.pbtxt`:
-
-```
-max_batch_size: 8
-dynamic_batching { max_queue_delay_microseconds: 1000 }
-```
-
-`build_engine.sh` menulis delay 5000 µs; di server produksi diturunkan ke
-1000 µs (latency lebih rendah, batch tetap terisi dari 14 kamera). Restart
-Triton setelah edit config.
-
-> **Jangan** export dengan `nms=True` ultralytics: NMS-nya hanya mengisi
-> deteksi untuk gambar pertama di batch. Dengan dynamic batching, kamera lain
-> di batch yang sama mendapat hasil kosong (≈ separuh frame tanpa deteksi).
-> `export_model.py` sudah selalu `nms=False` dan mendeteksi e2e dari shape output.
-
-Model lama/eksperimen simpan di luar `models/` (di server: `/data/model-sources/old/`)
-supaya tidak memakan VRAM. Bandingkan dua model dengan `tools/compare_models.py`.
-
-### 2.3 Model deteksi tambahan
-
-Langkahnya sama (export → build → restart). Bobot yang dipakai produksi:
-
-```bash
-# APD (VoxDroid Construction-Site-Safety, MIT)
-curl -sL -o apd_best.pt "https://raw.githubusercontent.com/VoxDroid/Construction-Site-Safety-PPE-Detection/main/Model-Training/Outputs/runs/detect/yolov8s_ppe_css_200_epochs/weights/best.pt"
-docker run --rm -v "$(pwd):/work" yolo-export --weights /work/apd_best.pt --imgsz 640 --name apd_640 --out-dir /work/models
-
-# Fire/smoke (luminous0219, AGPL-3.0)
-curl -sL -o firesmoke_best.pt "https://raw.githubusercontent.com/luminous0219/fire-and-smoke-detection-yolov8/main/weights/best.pt"
-docker run --rm -v "$(pwd):/work" yolo-export --weights /work/firesmoke_best.pt --imgsz 640 --name fire_smoke_640 --out-dir /work/models
-
-# Face detector (akanametov/yolo-face, GPL-3.0)
-curl -sL -o yolov8n-face.pt "https://github.com/akanametov/yolo-face/releases/download/1.0.0/yolov8n-face.pt"
-docker run --rm -v "$(pwd):/work" yolo-export --weights /work/yolov8n-face.pt --imgsz 640 --name face_640 --out-dir /work/models
-
-# ArcFace embedder (InsightFace buffalo_l, riset/non-komersial) — ONNX langsung
-curl -sL -o buffalo_l.zip "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
-unzip -o buffalo_l.zip w600k_r50.onnx
-mkdir -p models/arcface_112/1 && mv w600k_r50.onnx models/arcface_112/1/model.onnx
-printf 'platform: "onnxruntime_onnx"\nmax_batch_size: 0\n' > models/arcface_112/config.pbtxt
-# max_batch_size WAJIB 0: batch dim ONNX-nya fixed [1,3,112,112]
-
-docker compose --profile build run --rm triton-model-builder && docker compose restart triton
-```
-
-(PowerShell: ganti `"$(pwd)"` jadi `"${PWD}"`, `curl -o` jadi `Invoke-WebRequest -OutFile`.)
-
-APD/fire-smoke/face memakai model YOLOv8 dengan output raw; client menjalankan
-NMS numpy dan request-nya tidak di-batch dengan model person.
-
-### 2.4 Image kamera & Triton
-
-```bash
-docker compose up -d triton
-docker build -t python-counting-services-python-1:latest .
-```
-
-Service kamera (`services-python-<code>`) ditambahkan dashboard ke
-`docker-compose.yml`, dengan `env_file: .env_<CODE>`, network `envisions`, dan
-folder ini di-bind-mount ke `/app`. Artinya **update kode Python cukup
-`git pull` + restart container**, rebuild image hanya kalau `requirements.txt`
-atau `dockerfile` berubah. Ganti `.env_<CODE>` butuh recreate:
-
-```bash
-docker compose up -d --no-deps services-python-cctv-epw-s27
-```
+Container kamera me-mount folder ini ke `/app`, jadi **update kode Python
+cukup `git pull` + Restart container**. Rebuild image hanya kalau
+`requirements.txt` atau `dockerfile` berubah.
 
 ---
 

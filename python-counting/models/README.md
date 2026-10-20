@@ -18,7 +18,7 @@ models/
 ## Workflow
 
 Langkah lengkap produksi (export → uint8 → build → `batch_check`) ada di
-[../README.md § Setup model](../README.md#22-model-person-counting). Ringkas:
+[../../setup/04-models.md](../../setup/04-models.md). Ringkas:
 
 1. **Export ONNX** (sekali, di mana saja — satu-satunya langkah yang butuh ultralytics/torch):
    ```bash
