@@ -79,3 +79,11 @@ face_candidates = defaultdict(list)
 # point as the main tracker, since intrusion reuses its tracks/ids directly).
 intrusion_alerted_tracks = set()
 intrusion_last_point = {}
+
+# Dashboard-managed containers (see bootstrap.py / config_watch.py / outputs/heartbeat.py)
+config_version = 0          # effective config version currently applied
+restart_requested = None    # set (to a reason) by config_watch → main loop exits, Docker restarts us
+hb_fps = None               # processing FPS over the last ~10 s window
+hb_persons = None           # tracked persons per frame over that window
+triton_ok = None            # last inference call succeeded
+last_error = None           # last error message shown on the dashboard

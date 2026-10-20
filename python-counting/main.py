@@ -12,18 +12,21 @@ alive, the MJPEG stream shows "INFERENCE UNAVAILABLE", reconnection is retried
 with exponential backoff (1s → 30s), and the tracker is reset after reconnect so
 stale Kalman states can't produce phantom crossings.
 
-The legacy single-file (pre-Triton) implementation lives in git history (legacy/main_legacy.py, removed after the Triton migration).
+In a dashboard-managed container this runs via bootstrap.py, which loads the
+device configuration from PostgreSQL first; config_watch applies later changes.
 """
 import datetime
 import logging
 import math
 import os
+import sys
 import time
 
 import cv2
 import numpy as np
 
 import app_state as state
+import config_watch
 import counting_config as cfg
 import lifecycle
 from capture import LatestFrameCapture, is_live_source
@@ -31,7 +34,7 @@ from counting import process_track
 from detection import apd, face, firesmoke, intrusion
 from inference import TritonEmbedClient, TritonUnavailableError, TritonYoloClient
 from inference.model_metadata import load_model_classes
-from outputs import bbox_writer, db_worker, face_db, mjpeg_server, mqtt_out
+from outputs import bbox_writer, db_worker, face_db, heartbeat, mjpeg_server, mqtt_out
 from outputs.image_utils import crop_face
 from tracking import BYTETracker, BYTETrackerArgs, Detections
 
@@ -56,6 +59,22 @@ INTRUSION_ALERTED_TRACKS_MAX = 2000
 TRACK_COAST_FRAMES = 2
 
 _imshow_available = True  # opencv-headless has no GUI; disabled on first failure
+
+
+def graceful_exit(cap, reason):
+    """Flush pending DB writes and MQTT, report, release the camera and exit 0.
+    In a dashboard-managed container Docker's restart policy starts us again,
+    and bootstrap.py loads the new configuration."""
+    logging.info(f"Restarting: {reason}")
+    deadline = time.time() + 5
+    while not db_worker.db_queue.empty() and time.time() < deadline:
+        time.sleep(0.1)
+    mqtt_out.shutdown_mqtt()
+    heartbeat.send_final('stopping')
+    if cap is not None:
+        cap.release()
+    safe_destroy_windows()
+    sys.exit(0)
 
 
 def validate_cctv_connection(rtsp_url, timeout=5):
@@ -312,6 +331,10 @@ def main():
     logging.info(f"Daily MQTT send time: {cfg.DAILY_SEND_TIME}")
     logging.info(f"Triton: {cfg.TRITON_URL} model={cfg.TRITON_MODEL} conf={cfg.YOLO_CONFIDENCE}")
 
+    # Dashboard-managed container: follow config changes and report status.
+    config_watch.start()
+    heartbeat.start()
+
     try:
         video_source = get_video_source()
         logging.info(f"Video source selected: {video_source}")
@@ -379,6 +402,8 @@ def main():
     last_waiting_log = time.time()
 
     while True:
+        if state.restart_requested:
+            graceful_exit(None, state.restart_requested)
         try:
             logging.info('Initializing Service...')
 
@@ -398,6 +423,8 @@ def main():
             det_sum = 0
             trk_sum = 0
             while True:
+                if state.restart_requested:
+                    graceful_exit(cap, state.restart_requested)
                 count += 1
                 if count % cfg.FRAME_SKIP != 0:
                     cap.grab()  # skip this frame
@@ -441,6 +468,8 @@ def main():
                 try:
                     dets = client.infer(detection_frame, pre_cache)  # [N,6] x1,y1,x2,y2,conf,cls
                 except TritonUnavailableError as e:
+                    state.triton_ok = False
+                    state.last_error = str(e)
                     logging.error(f"{e} — retrying in {triton_backoff:.0f}s (capture stays alive)")
                     next_triton_retry = time.time() + triton_backoff
                     triton_backoff = min(triton_backoff * 2, TRITON_BACKOFF_MAX_S)
@@ -448,7 +477,9 @@ def main():
                     push_degraded_frame(frame, "INFERENCE UNAVAILABLE (Triton down)")
                     continue
 
+                state.triton_ok = True
                 if triton_was_down:
+                    state.last_error = None
                     logging.info("[Triton] Reconnected — resetting tracker state")
                     reset_tracking_state(tracker, apd_tracker, face_tracker)
                     triton_was_down = False
@@ -739,6 +770,8 @@ def main():
                 if time.time() - fps_timer >= 10.0:
                     actual_fps = fps_counter / (time.time() - fps_timer)
                     persons = f"persons/frame det={det_sum / fps_counter:.2f} trk={trk_sum / fps_counter:.2f}"
+                    state.hb_fps = round(actual_fps, 1)
+                    state.hb_persons = round(trk_sum / fps_counter, 2)
                     if isinstance(cap, LatestFrameCapture):
                         logging.info(f"Processing FPS: {actual_fps:.1f} (dropped {cap.pop_dropped()} stale frames, {persons})")
                     else:
@@ -763,6 +796,8 @@ def main():
                     state.is_midnight = False
 
         except Exception as error:
+            state.last_error = str(error)
+            state.hb_fps = None
             logging.error(f"Error occurred: {str(error)}. Restarting in 5 seconds...")
             if 'cap' in locals():
                 cap.release()

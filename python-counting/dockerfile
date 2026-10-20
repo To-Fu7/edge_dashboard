@@ -16,11 +16,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY main.py capture.py counting.py counting_config.py app_state.py lifecycle.py init_db.py ./
+COPY main.py bootstrap.py config_watch.py edge_db.py capture.py counting.py counting_config.py app_state.py lifecycle.py ./
 COPY detection/ ./detection/
 COPY inference/ ./inference/
 COPY tracking/ ./tracking/
 COPY outputs/ ./outputs/
 
 EXPOSE 8090
-CMD ["python", "main.py"]
+# bootstrap.py loads the device config from PostgreSQL (EDGE_DEVICE_ID), then runs main.py.
+CMD ["python", "bootstrap.py"]
