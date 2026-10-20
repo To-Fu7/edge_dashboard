@@ -3,7 +3,6 @@ import { readDeviceEnv, writeDeviceEnv, deleteDeviceEnv } from '@/lib/env-parser
 import { removeService, serviceExists, getContainerName, composeStop } from '@/lib/compose';
 import { getContainerStatus } from '@/lib/docker';
 import { upsertCameraStream, removeCameraStream } from '@/lib/stream-gateway';
-import { deployPortForwardConfig } from '@/lib/portforward';
 
 export async function GET(
   _req: Request,
@@ -63,21 +62,7 @@ export async function PUT(
       removeCameraStream(subCode).catch(() => {});
     }
 
-    // Regenerate + redeploy the port-forward nginx on every save regardless of
-    // whether PORTFWD_* fields were in this particular partial body, since
-    // disabling a forward (PORTFWD_ENABLED=false) also needs a redeploy to drop
-    // it. Unlike the fire-and-forget stream-gateway calls above, this is AWAITED
-    // so the response can tell the UI whether nginx actually got the new config
-    // — a silent fire-and-forget here was why saves looked applied but weren't.
-    // The env is already persisted; a deploy failure is reported, not fatal.
-    let portForward;
-    try {
-      portForward = await deployPortForwardConfig();
-    } catch (err) {
-      portForward = { deployed: false, error: String(err) };
-    }
-
-    return NextResponse.json({ success: true, portForward });
+    return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
@@ -104,7 +89,6 @@ export async function DELETE(
     // Best-effort, same non-blocking posture as PUT above.
     removeCameraStream(code).catch(() => {});
     removeCameraStream(`${code}_sub`).catch(() => {});
-    deployPortForwardConfig().catch(() => {}); // deleteDeviceEnv already dropped its forward from collectPortForwards()
 
     return NextResponse.json({ success: true });
   } catch (e) {

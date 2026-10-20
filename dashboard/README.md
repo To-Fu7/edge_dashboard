@@ -22,7 +22,7 @@ yang otomatis terbuka saat halaman di dalamnya sedang aktif.
 | Grup | Item | Route | Isi |
 |---|---|---|---|
 | **Utama** | Stream | `/stream` | Grid live view lewat stream-gateway (HLS/MSE/WebRTC) |
-| | Devices | `/devices`, `/devices/[code]` | Kamera: nama, kode, RTSP URL, tab **Stream** (expose via gateway, port forward) |
+| | Devices | `/devices`, `/devices/[code]` | Kamera: nama, kode, RTSP URL, tab **Stream** (expose via gateway, forward kamera ini) |
 | | Automation | `/automation` | Editor Node-RED yang di-embed (§7) |
 | **Detection** ▾ | Dashboard | `/detection` | Status Triton, kartu GPU (util, **power W/limit (%)**, VRAM), ringkasan device |
 | | Devices | `/detection/devices`, `/detection/devices/[code]` | Konfigurasi deteksi: model, counting, APD/fire-smoke/face/intrusion, MQTT topic; tab **Lines** (gambar line/zone) dan **Logs**; kontrol container |
@@ -32,7 +32,7 @@ yang otomatis terbuka saat halaman di dalamnya sedang aktif.
 | | Settings | `/detection/settings` | Hardware mode, Triton (image tag, default model, embed model), PostgreSQL, MQTT, detection defaults |
 | **Settings** ▾ | General | `/settings` | Nama dashboard, Stream Gateway |
 | | Logs | `/settings/logs` | Log semua container kamera (`/logs` redirect ke sini) |
-| | Nginx | `/settings/nginx` | Status `edge-portfwd-nginx`, daftar forward, config live vs generated, redeploy, log container (§4) |
+| | Nginx | `/settings/nginx` | Kelola forward (pilih kamera → port), status `edge-portfwd-nginx`, config live vs generated, redeploy, log container (§4) |
 
 `/` redirect ke `/stream`. Halaman `devices` dan `settings` dipakai bersama
 oleh kedua area. Route `/detection/...` hanya me-re-export halaman yang sama,
@@ -99,10 +99,23 @@ atau sajikan dashboard lewat HTTPS/HTTP2.
 
 ## 4. Port forward
 
-Tab Stream di device: isi `PORTFWD_*`. Dashboard membuat ulang seluruh
-`nginx/portfwd-nginx.conf` dari semua device, lalu reload `edge-portfwd-nginx`.
-Settings → Nginx menampilkan semua forward, membandingkan config yang sedang
-jalan dengan hasil generate, dan punya tombol **Redeploy config**.
+Dikelola di **Settings → Nginx**: **Add forward** → pilih kamera (IP dan port
+tujuan otomatis diambil dari RTSP URL kamera itu) atau pilih *Manual* untuk
+host apa saja (mis. port web NVR) → pilih listen port 5500–5600 → simpan.
+Forward bisa diedit, dinonaktifkan, atau dihapus dari tabel yang sama. Kalau
+RTSP kamera berubah, tabel menandai forward yang tujuannya sudah tidak cocok,
+dengan tombol **Update**.
+
+Daftar forward disimpan di `data/forwards.json` (volume `dashboard-data`).
+Setiap perubahan membuat ulang seluruh `nginx/portfwd-nginx.conf`, memvalidasi
+dengan `nginx -t`, lalu reload `edge-portfwd-nginx`. Forward lama yang dulu
+disimpan di `PORTFWD_*` per device diimpor otomatis sekali saat file ini belum
+ada. Tab Stream di halaman device hanya menampilkan forward kamera itu,
+dengan tombol ke Settings → Nginx.
+
+Forward adalah passthrough TCP: setiap client membuka koneksi sendiri ke
+kamera/NVR. Untuk banyak penonton, pakai stream-gateway (§3).
+
 Rentang 5500–5600 sudah dipublish, jadi menambah forward tidak perlu recreate
 container. Kalau ada container lain yang memakai port di rentang itu, geser
 rentangnya di compose **dan** `LISTEN_PORT_MIN/MAX` di `lib/portforward.ts`.

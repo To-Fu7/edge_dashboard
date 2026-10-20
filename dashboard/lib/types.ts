@@ -55,6 +55,8 @@ export interface DeviceEnvConfig {
   STREAM_GATEWAY_ALWAYS_ON?: string;  // 'true' = stream-gateway connects to this camera immediately and stays connected regardless of viewers; 'false'/unset = on-demand (connects on first viewer, disconnects after an idle grace period)
   STREAM_GATEWAY_AUDIO?: string;      // 'true' = pass the camera's audio track through to MSE/HLS/WebRTC (AAC/Opus sources only for MSE/HLS; WebRTC additionally needs Opus specifically — see stream-gateway's own docs)
   SUBSTREAM_URL?: string;             // optional lower-resolution RTSP URL (e.g. Hikvision Channel 102) — manual field only, registered as its own independent stream-gateway camera ("<code>_sub"), no automatic grid-vs-fullscreen switching
+  // Legacy: port forwards now live in data/forwards.json (Settings → Nginx);
+  // these are only read once, to import pre-existing forwards.
   PORTFWD_ENABLED?: string;      // 'true' = raw TCP port-forward this device's camera through the existing nginx container's stream{} block
   PORTFWD_SRC_IP?: string;       // camera IP to forward to (defaults to the host part of RTSP_URL)
   PORTFWD_SRC_PORT?: string;     // camera port to forward to (default '554')

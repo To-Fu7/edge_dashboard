@@ -317,16 +317,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      // The env was saved regardless; the port-forward nginx deploy is a
-      // separate step that can fail on its own — surface that instead of a
-      // blanket "saved" that hides a forward never reaching nginx. `skipped`
-      // means the feature is simply off (no nginx container configured).
-      const pf = data.portForward;
-      if (pf && !pf.deployed && !pf.skipped) {
-        toast.warning(`Settings saved, but port-forward deploy failed: ${pf.error}`);
-      } else {
-        toast.success('Settings saved. Restart service to apply changes.');
-      }
+      toast.success('Settings saved. Restart service to apply changes.');
     } catch (e) {
       toast.error(`Failed to save: ${e}`);
     } finally {
@@ -950,6 +941,8 @@ function FormField({ label, hint, children, className }: { label: string; hint?:
 
 interface StreamUrlSet { hls: string; mse: string; webrtc: string }
 
+interface DeviceForward { id: string; name: string; srcIp: string; srcPort: string; listenPort: string; enabled: boolean }
+
 function StreamSettingsTab({
   code, env, setField,
 }: {
@@ -959,8 +952,16 @@ function StreamSettingsTab({
 }) {
   const [urls, setUrls] = useState<{ main: StreamUrlSet; sub: StreamUrlSet | null } | null>(null);
   const [urlsLoading, setUrlsLoading] = useState(false);
-  const [portCheck, setPortCheck] = useState<{ available: boolean; conflict: string | null } | null>(null);
-  const [portChecking, setPortChecking] = useState(false);
+  const [forwards, setForwards] = useState<DeviceForward[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/portforward?device=${encodeURIComponent(code)}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setForwards(d.forwards || []); })
+      .catch(() => { if (!cancelled) setForwards([]); });
+    return () => { cancelled = true; };
+  }, [code]);
 
   async function exposeUrls() {
     setUrlsLoading(true);
@@ -987,29 +988,6 @@ function StreamSettingsTab({
   async function copy(value: string) {
     await navigator.clipboard.writeText(value);
     toast.success('Copied');
-  }
-
-  async function checkPort() {
-    const port = env.PORTFWD_LISTEN_PORT;
-    if (!port) { toast.error('Enter a listen port first'); return; }
-    setPortChecking(true);
-    try {
-      const res = await fetch(`/api/devices/${code}/port-check?port=${encodeURIComponent(port)}`);
-      const data = await res.json();
-      setPortCheck(data);
-    } catch (e) {
-      toast.error(`Check failed: ${e}`);
-    } finally {
-      setPortChecking(false);
-    }
-  }
-
-  function suggestPort() {
-    // Client-side starting point only, inside the 5500-5600 range published by
-    // the edge-portfwd-nginx container — "Check availability" confirms it
-    // server-side against the real registry.
-    setField('PORTFWD_LISTEN_PORT', String(5500 + Math.floor(Math.random() * 101)));
-    setPortCheck(null);
   }
 
   return (
@@ -1083,59 +1061,34 @@ function StreamSettingsTab({
       </Section>
 
       <Section title="Port Forward">
-        <div className="space-y-3 rounded-md border border-border p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Raw TCP Port Forward (RTSP passthrough)</span>
-            <Switch
-              checked={env.PORTFWD_ENABLED === 'true'}
-              onCheckedChange={v => setField('PORTFWD_ENABLED', v ? 'true' : 'false')}
-            />
-          </div>
-          {env.PORTFWD_ENABLED === 'true' && (
-            <div className="grid grid-cols-3 gap-4">
-              <FormField label="Forward IP">
-                <Input
-                  value={env.PORTFWD_SRC_IP || ''}
-                  onChange={e => setField('PORTFWD_SRC_IP', e.target.value)}
-                  placeholder="10.11.0.48"
-                />
-              </FormField>
-              <FormField label="Forward Port">
-                <Input
-                  value={env.PORTFWD_SRC_PORT ?? ''}
-                  onChange={e => setField('PORTFWD_SRC_PORT', e.target.value)}
-                  placeholder="554"
-                />
-              </FormField>
-              <FormField label="Listen Port">
-                <Input
-                  value={env.PORTFWD_LISTEN_PORT || ''}
-                  onChange={e => { setField('PORTFWD_LISTEN_PORT', e.target.value); setPortCheck(null); }}
-                  placeholder="5546"
-                />
-              </FormField>
-              <div className="col-span-3 flex items-center gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={checkPort} disabled={portChecking}>
-                  {portChecking ? 'Checking...' : 'Check availability'}
-                </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={suggestPort}>
-                  Suggest an open port
-                </Button>
-                {portCheck && (
-                  <span className={`text-xs ${portCheck.available ? 'text-green-500' : 'text-red-400'}`}>
-                    {portCheck.available ? 'Available' : portCheck.conflict}
+        <div className="space-y-3">
+          {forwards === null ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : forwards.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              This camera isn&apos;t forwarded. A forward exposes its RTSP stream on a host port
+              (5500&ndash;5600) through the <span className="font-mono">edge-portfwd-nginx</span> container.
+            </p>
+          ) : (
+            <div className="rounded-md border border-border divide-y divide-border">
+              {forwards.map(f => (
+                <div key={f.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="truncate">{f.name}</span>
+                  <span className="font-mono text-xs text-muted-foreground shrink-0">
+                    :{f.listenPort} &rarr; {f.srcIp}:{f.srcPort}
                   </span>
-                )}
-              </div>
-              <p className="col-span-3 text-xs text-muted-foreground">
-                Listen Port must be in the range <span className="font-medium">5500&ndash;5600</span>,
-                which the dedicated <span className="font-mono">edge-portfwd-nginx</span> container
-                already publishes on the host. Availability is checked against ports this dashboard
-                already forwards (other devices) — not a live OS-level socket probe. Applied on Save:
-                the whole forwarder config is regenerated and reloaded, no container recreate needed.
-              </p>
+                  <span className={`text-xs shrink-0 ${f.enabled ? 'text-green-500' : 'text-muted-foreground'}`}>
+                    {f.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
+          <Link href={`/settings/nginx?device=${encodeURIComponent(code)}`}>
+            <Button type="button" size="sm" variant="outline">
+              {forwards && forwards.length > 0 ? 'Manage forwards' : 'Forward this camera'}
+            </Button>
+          </Link>
         </div>
       </Section>
     </>

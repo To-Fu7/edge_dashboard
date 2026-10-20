@@ -58,8 +58,12 @@ Buka kamera di **Detection → Devices → (kamera)**:
 
 ### 4. (opsional) Live view & port forward
 
-Buka kamera di **Devices** (area utama) → tab **Stream**: expose ke stream
-gateway, dan isi port forward kalau RTSP perlu diakses dari luar.
+Buka kamera di **Devices** (area utama) → tab **Stream** → **Expose CCTV URL**
+untuk live view lewat stream gateway.
+
+Kalau RTSP kamera perlu diakses langsung dari luar server: **Settings → Nginx
+→ Add forward** → pilih kamera → listen port (5500–5600) → simpan. Client lalu
+memakai `rtsp://<user>:<password>@<ip-server>:<listen-port>/<path RTSP asli>`.
 
 ## Verifikasi
 
@@ -102,4 +106,6 @@ python3 tools/stream_health.py services-python-<code> --follow
 | Gambar pecah (tearing), log `error while decoding MB` | Jaringan/kamera, atau backpressure | `stream_health.py`: kalau `dropped` kecil tapi error decode tinggi, masalahnya di jaringan/NVR (bitrate, kabel) |
 | Hitungan IN/OUT terbalik | Urutan garis A/B | Aktifkan `SWAP_IN_OUT` |
 | Garis tidak pas setelah ganti resolusi | Koordinat terikat ke `SCREEN_RESOLUTION` lama | Gambar ulang garis |
+| Forward: *Listen port 55xx is already used by "..."* | Port sudah dipakai forward lain | Pakai port lain (form mengisi port kosong pertama secara otomatis) |
+| Forward tersimpan tapi client tidak bisa konek ke `<ip-server>:55xx` | Nginx belum reload, firewall, atau kamera tidak terjangkau dari server | Settings → Nginx: cek badge *Config in sync* dan log container; buka port di firewall; `nc -vz <ip-kamera> 554` dari server |
 | Add Camera: *Device with this code already exists* | Kode sudah dipakai | Pakai kode lain, atau hapus device lama dulu |
