@@ -336,8 +336,28 @@ step_prereq() {
       ok "GPU visible inside containers"
       ;;
     jetson)
-      dk info --format '{{json .Runtimes}}' | grep -q nvidia || die "Docker has no 'nvidia' runtime" \
-        "Install it with: sudo apt-get install -y nvidia-container && sudo systemctl restart docker"
+      # A Docker installed/upgraded from docker.com (instead of JetPack's) keeps
+      # the toolkit package but loses the nvidia runtime registration.
+      if ! dk info --format '{{json .Runtimes}}' | grep -q nvidia; then
+        if command -v nvidia-ctk >/dev/null; then
+          info "NVIDIA Container Toolkit is installed but not registered with Docker $(dk version --format '{{.Server.Version}}')."
+          confirm "Register the nvidia runtime with Docker now (nvidia-ctk runtime configure)?" \
+            || die "Docker has no 'nvidia' runtime" "sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+        else
+          confirm "NVIDIA Container Toolkit is missing. Install it from the JetPack repo (nvidia-container)?" \
+            || die "Docker has no 'nvidia' runtime" \
+              "sudo apt-get update && sudo apt-get install -y nvidia-container && sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+          sudo apt-get update -qq
+          sudo apt-get install -y nvidia-container \
+            || die "Could not install nvidia-container" "Check that the JetPack apt repo (repo.download.nvidia.com/jetson) is in /etc/apt/sources.list.d/."
+        fi
+        sudo nvidia-ctk runtime configure --runtime=docker
+        sudo systemctl restart docker
+        sleep 3
+        resolve_docker || die "Docker did not come back after the restart" "sudo systemctl status docker; sudo journalctl -u docker -n 50"
+        dk info --format '{{json .Runtimes}}' | grep -q nvidia || die "Docker still has no 'nvidia' runtime" \
+          "Check /etc/docker/daemon.json; if Docker itself is failing on JetPack 6 with iptables/kernel-module errors, install Docker 27.x instead of 28+."
+      fi
       ok "NVIDIA container runtime present (JetPack $JETPACK)"
       ;;
     cpu)
