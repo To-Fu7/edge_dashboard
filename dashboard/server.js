@@ -30,7 +30,7 @@ const httpProxy = require('http-proxy');
 const dev = process.env.NODE_ENV !== 'production';
 const port = parseInt(process.env.PORT || '3000', 10);
 const hostname = process.env.HOSTNAME || '0.0.0.0';
-const noderedUrl = process.env.NODERED_URL || 'http://nodered:1880';
+const noderedUrl = process.env.NODERED_URL || 'http://edge-nodered:1880';
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
@@ -99,7 +99,11 @@ app.prepare().then(() => {
         res.end();
         return;
       }
-      proxy.web(req, res);
+      // Node-RED serves its editor/Admin API at its root: strip /nodered and
+      // target the full URL (ignorePath) — mutating req.url alone isn't enough
+      // because http-proxy re-joins it with the target path.
+      const nrPath = req.url.slice('/nodered'.length) || '/';
+      proxy.web(req, res, { target: noderedUrl + nrPath, ignorePath: true });
       return;
     }
     const parsedUrl = parse(req.url, true);
@@ -111,7 +115,8 @@ app.prepare().then(() => {
   // just regular HTTP requests.
   server.on('upgrade', (req, socket, head) => {
     if (isNoderedPath(req.url) && sessionRole(req) === 'admin') {
-      proxy.ws(req, socket, head);
+      const nrWsPath = req.url.slice('/nodered'.length) || '/';
+      proxy.ws(req, socket, head, { target: noderedUrl + nrWsPath, ignorePath: true });
     } else {
       socket.destroy();
     }

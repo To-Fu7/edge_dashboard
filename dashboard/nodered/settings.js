@@ -1,29 +1,25 @@
 /**
  * Node-RED settings — mounted read-only into /data/settings.js.
  *
- * Served behind the dashboard's own origin via a path-based reverse proxy
- * (dashboard/server.js proxies /nodered/* to this container, HTTP + the
- * WebSocket "comms" channel used for live deploy status / the debug panel).
- * The dashboard's "Automation" page then embeds /nodered in an <iframe> so
- * the dashboard's own sidebar/layout stays visible around it.
- * httpAdminRoot/httpNodeRoot below must match that proxy path exactly, or
- * the editor's own asset/API/websocket URLs won't resolve once proxied.
+ * The dashboard is the only way in: dashboard/server.js proxies /nodered/* to
+ * this container (HTTP + the WebSocket "comms" channel for deploy status and
+ * debug messages), stripping the /nodered prefix — so the editor and Admin API
+ * live at the root here. The dashboard's Automation pages list flows through
+ * the Admin API (lib/nodered.ts) and open a single flow in an iframe.
  *
- * No admin auth is configured here — this intentionally matches the rest of
- * the dashboard (no login system today; the deployment network is assumed
- * trusted/internal). If that assumption ever changes, add `adminAuth` here
- * (see https://nodered.org/docs/user-guide/runtime/securing-node-red)
- * BEFORE exposing this to anything less trusted — Function/exec nodes let
- * anyone who can reach the editor run arbitrary code on this host.
+ * No adminAuth: access is gated by the dashboard login (admin only) and the
+ * container publishes no host port. Anything else on the `envisions` Docker
+ * network can still reach port 1880 — add adminAuth (and teach lib/nodered.ts
+ * to send a token) before putting untrusted containers on that network.
+ * Function/exec nodes run arbitrary code on this host.
  */
 module.exports = {
     uiPort: process.env.PORT || 1880,
 
-    // Path this editor/runtime is served under once proxied by the dashboard.
-    httpAdminRoot: '/nodered',
-    // Flow-defined HTTP in/out nodes live under a distinct sub-path so they
-    // never collide with the dashboard's own /api/* Next.js routes.
-    httpNodeRoot: '/nodered/api',
+    // Editor + Admin API at the root (the dashboard proxy strips /nodered).
+    httpAdminRoot: '/',
+    // Flow-defined HTTP in/out nodes (reachable as /nodered/api/... through the proxy).
+    httpNodeRoot: '/api',
 
     // Everything below persists in the /data volume (named volume in
     // docker-compose, NOT committed to git — contains flows + credentials +
@@ -42,11 +38,11 @@ module.exports = {
 
     editorTheme: {
         page: {
-            title: 'Automation',
+            title: 'Edge Automation',
             css: '/data/custom-theme.css',
         },
         header: {
-            title: 'Automation',
+            title: 'Edge Automation',
         },
         // The dashboard already provisions/manages docker-compose services —
         // Node-RED's own "Projects" (git-backed flow storage) would be a
@@ -65,7 +61,7 @@ module.exports = {
         },
     },
 
-    // The dashboard embeds this editor in a same-origin <iframe> (app/automation/page.tsx).
+    // The dashboard embeds this editor in a same-origin <iframe> (components/nodered/IframeEditor.tsx).
     // Explicitly allow same-origin framing so a stricter default (or a future
     // Node-RED version defaulting to X-Frame-Options: DENY) can't silently
     // blank out that iframe.

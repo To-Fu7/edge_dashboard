@@ -601,7 +601,7 @@ step_config() {
   $USE_BUNDLED_DB && ports+=(5435)
   $USE_BUNDLED_MQTT && ports+=(1884 9001)
   local conflicts=() owner
-  local ours_re='^(edge-dashboard|stream-gateway|edge-portfwd-nginx|nodered|triton-inference-server|env_services_timescaledb|env_services_mqtt)$'
+  local ours_re='^(edge-dashboard|stream-gateway|edge-portfwd-nginx|edge-nodered|triton-inference-server|env_services_timescaledb|env_services_mqtt)$'
   command -v ss >/dev/null || { warn "'ss' not found — skipping the port check."; ports=(); }
   for p in "${ports[@]}"; do
     ss -Htln "sport = :$p" 2>/dev/null | grep -q . || continue
