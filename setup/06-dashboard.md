@@ -10,7 +10,7 @@ terhubung ke Triton, PostgreSQL, dan MQTT.
 | `edge-dashboard` | 3001 | UI + API, mengatur container lain lewat Docker |
 | `stream-gateway` | 8555/tcp, 8189/udp | Live view kamera di browser |
 | `edge-portfwd-nginx` | 5500–5600/tcp | Port-forward RTSP |
-| `nodered` | — (tidak dipublish) | Automation, di-embed di `/automation`, khusus admin |
+| `edge-nodered` | — (tidak dipublish) | Automation: daftar flow, editor per flow, community nodes (khusus admin) |
 | `env_services_timescaledb` | 5435 | PostgreSQL bawaan (Opsi A di [01](01-database.md)) |
 | `env_services_mqtt` | 1884, 9001 | MQTT bawaan (Opsi A di [02](02-mqtt.md)) |
 
@@ -98,8 +98,8 @@ Lalu **Settings → General**: nama dashboard.
 | Peringatan: *can't see python-counting/tools/build_engine.sh* | Folder repo tidak lengkap atau mount `../python-counting` gagal | Jalankan compose dari folder `dashboard/` di repo yang utuh |
 | `Bind for 0.0.0.0:3001 failed: port is already allocated` | Port dipakai service lain | Ganti `"3001:3000"` di compose ke port lain |
 | `edge-portfwd-nginx` gagal start: *address already in use* | Ada service lain di port 5500–5600 | Geser rentang port di compose **dan** `LISTEN_PORT_MIN/MAX` di `lib/portforward.ts` |
-| Halaman Automation: *Automation service (Node-RED) is unreachable* (502) | Container `nodered` belum jalan | `docker compose ps nodered`, `docker compose logs nodered`, lalu `docker compose up -d nodered` |
-| Editor Node-RED tampil tapi tema default / panel debug *disconnected* | Container restart saat tab terbuka, atau WebSocket tidak ter-proxy | Hard refresh (Ctrl+Shift+R). Pastikan log dashboard berisi `proxying /nodered -> http://nodered:1880` |
+| Halaman Automation: *Node-RED unreachable* / editor 502 | Container `edge-nodered` belum jalan atau belum healthy | `docker compose ps nodered`, `docker compose logs nodered`, lalu `docker compose up -d nodered` |
+| Editor Node-RED tampil tapi tema default / panel debug *disconnected* | Container restart saat tab terbuka, atau WebSocket tidak ter-proxy | Hard refresh (Ctrl+Shift+R). Pastikan log dashboard berisi `proxying /nodered -> http://edge-nodered:1880` |
 | Detection Dashboard: Triton offline | Triton belum jalan, atau tidak satu network | Start Triton ([05](05-triton.md)); `docker network inspect envisions` harus memuat dashboard dan `triton-inference-server` |
 | Kartu GPU menampilkan N/A | Metrics Triton (`:8002`) tidak terjangkau | Sama seperti di atas; metrics hanya ada saat Triton jalan |
 | Halaman apa pun: *Login unavailable: Database ... is not reachable* (503) | Dashboard tidak bisa konek ke database `edge` | Cek `EDGE_DB_*` di `.env` dan `curl localhost:3001/api/health`; lihat [01 → Kalau error](01-database.md#kalau-error) |

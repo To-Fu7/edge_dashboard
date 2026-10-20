@@ -10,7 +10,7 @@ ganti model, update besar). Semua harus ✅ sebelum sistem dianggap siap.
 | 1 | GPU di container | `docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi` | GPU tampil |
 | 2 | Data di NVMe | `docker info --format '{{.DockerRootDir}}'` dan `findmnt /opt/ai` | Di bawah `/data` |
 | 2b | Login & role | Masuk sebagai `user` | Hanya Stream dan Detection → Dashboard yang tampil |
-| 3 | Semua container jalan | `docker ps --format '{{.Names}}\t{{.Status}}'` | Triton, dashboard, stream-gateway, nginx, nodered, DB, MQTT, dan semua `device-*` berstatus `Up` (bukan `Restarting`) |
+| 3 | Semua container jalan | `docker ps --format '{{.Names}}\t{{.Status}}'` | Triton, dashboard, stream-gateway, nginx, edge-nodered, DB, MQTT, dan semua `device-*` berstatus `Up` (bukan `Restarting`) |
 | 4 | Model siap | `curl -s -X POST localhost:8000/v2/repository/index` | Semua `READY` |
 | 5 | Batch benar | `tools/batch_check.py` ([05](05-triton.md#verifikasi)) | Semua frame punya deteksi |
 | 6 | FPS kamera | `python3 python-counting/tools/stream_health.py <container> --since 30m` | ≥ 20 fps, error decode mendekati 0 |

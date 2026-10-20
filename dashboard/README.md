@@ -194,19 +194,25 @@ Bar power merah saat ≥ 90% limit, yang berarti GPU sudah penuh.
 
 ## 7. Automation (Node-RED)
 
-Halaman `/automation` meng-embed editor Node-RED dalam `<iframe src="/nodered/">`.
-`server.js` mem-proxy `/nodered/*` (HTTP **dan** WebSocket, untuk panel debug
-dan status deploy live) ke container `nodered`. Node yang di-install lewat
-"Manage palette" tersimpan di volume `nodered-data`.
+Khusus admin. Tiga halaman di atas Node-RED asli (container `edge-nodered`):
 
-Untuk mematikan: set `NODERED_ENABLED = false` di `server.js`, comment service
-`nodered` (dan `depends_on`/`NODERED_URL` di service dashboard) di
-`docker-compose.yml`, dan hapus item Automation di `components/Sidebar.tsx`.
+| Halaman | Isi |
+|---|---|
+| `/automation` | Daftar flow: status koneksi Node-RED, **New Flow**, on/off per flow, panel debug per flow (pesan node *debug*, bisa difilter per node) |
+| `/automation/<flowId>` | Editor Node-RED untuk flow itu (iframe), breadcrumb kembali ke daftar, fullscreen |
+| `/automation/nodes` | Community nodes: cari, install, uninstall (tersimpan di volume `nodered-data`) |
 
-Node-RED berjalan tanpa login (`adminAuth` kosong). Flow bisa menjalankan
-kode di server, jadi tambahkan `adminAuth` di `nodered/settings.js` sebelum
-dashboard diekspos ke jaringan yang tidak tepercaya. Contoh flow ada di
-[`../nodered-flows/`](../nodered-flows/).
+- Dashboard bicara ke Node-RED lewat Admin API (`lib/nodered.ts`,
+  `/api/nodered/*`).
+- `server.js` mem-proxy `/nodered/*` (HTTP **dan** WebSocket `comms` untuk
+  status deploy dan debug) ke `edge-nodered:1880`, memotong prefix `/nodered`
+  (Node-RED melayani editor di root). Proxy ini juga mengecek sesi admin.
+- Container tidak mempublish port ke host, dan Node-RED berjalan **tanpa
+  `adminAuth`**: aksesnya dijaga oleh login dashboard. Container lain di network
+  `envisions` masih bisa menjangkau port 1880. Flow bisa menjalankan kode di
+  server, jadi tambahkan `adminAuth` di `nodered/settings.js` sebelum ada
+  container tak tepercaya di network itu.
+- Contoh flow ada di [`../nodered-flows/`](../nodered-flows/).
 
 ---
 
