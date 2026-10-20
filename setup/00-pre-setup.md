@@ -64,6 +64,7 @@ curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-contai
   | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
+sudo mkdir -p /etc/cdi && sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml   # Docker 28+ (CDI)
 sudo systemctl restart docker
 ```
 
@@ -126,6 +127,7 @@ ls /opt/ai/dashboard-python-counting                             # dashboard  py
 | `nvidia-smi`: *NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver* | Driver belum termuat (belum reboot, atau Secure Boot memblokir modul) | Reboot. Kalau masih gagal, nonaktifkan Secure Boot di BIOS atau enroll MOK saat instal driver |
 | `permission denied while trying to connect to the Docker daemon socket` | User belum di grup `docker` | `sudo usermod -aG docker $USER`, lalu logout/login |
 | `could not select device driver "" with capabilities: [[gpu]]` | NVIDIA Container Toolkit belum terpasang/terkonfigurasi | Ulangi langkah 3, lalu `sudo systemctl restart docker` |
+| `failed to discover GPU vendor from CDI: no known GPU vendor found` | Docker 28+ memakai CDI untuk `--gpus`, tapi spec CDI NVIDIA belum dibuat (atau toolkit belum terpasang walau `daemon.json` sudah menyebut runtime `nvidia`) | Pasang toolkit (langkah 3), lalu `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml && sudo systemctl restart docker` |
 | `unknown or invalid runtime name: nvidia` | `nvidia-ctk runtime configure` belum dijalankan | `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker` |
 | `CUDA driver version is insufficient for CUDA runtime version` (saat test atau Triton) | Driver terlalu tua untuk image | Upgrade driver (langkah 1) |
 | Docker tidak mau start setelah ganti `data-root` | Folder baru tidak ada, atau JSON `daemon.json` salah | `sudo mkdir -p /data/docker`, cek `sudo journalctl -u docker -n 50`, validasi JSON |

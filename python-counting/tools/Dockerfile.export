@@ -3,7 +3,9 @@
 # Build:  docker build -f tools/Dockerfile.export -t yolo-export tools/
 # Run:    docker run --rm -v $(pwd):/work yolo-export \
 #           --weights /work/yolo26m.pt --imgsz 640 --out-dir /work/models
-FROM ultralytics/ultralytics:latest
+# Jetson: --build-arg BASE=ultralytics/ultralytics:latest-jetson-jetpack6 (or -jetpack5)
+ARG BASE=ultralytics/ultralytics:latest
+FROM ${BASE}
 
 WORKDIR /export
 COPY export_model.py .

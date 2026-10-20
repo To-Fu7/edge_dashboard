@@ -84,8 +84,9 @@ dynamic_batching {
 }
 ```
 
-Builder menulis delay 5000 µs; produksi memakai 1000 µs (latensi lebih
-rendah, batch tetap terisi dari banyak kamera).
+Builder menulis delay `1000` µs secara default (nilai produksi: latensi
+rendah, batch tetap terisi dari banyak kamera). Ubah lewat env saat build,
+misalnya `-e QUEUE_DELAY_US=3000` untuk kamera sedikit di GPU yang sibuk.
 
 ### 6. Model deteksi tambahan (opsional)
 

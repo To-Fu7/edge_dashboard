@@ -1,0 +1,7 @@
+
+# setup/install.sh runtime files
+setup/logs/
+setup/.install-state
+setup/.install-answers
+model-sources/
+python-counting/.install-frames/

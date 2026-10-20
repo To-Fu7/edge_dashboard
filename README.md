@@ -74,6 +74,10 @@ menyesuaikan path (`/devices/...` vs `/detection/devices/...`).
 
 ## 2. Setup
 
+Cara tercepat: **`./setup/install.sh`** (Linux x86_64 / Jetson) atau
+`setup\install.ps1` (Windows → WSL2). Installer mendeteksi platform, menjalankan
+semua langkah, dan bisa dilanjutkan dari langkah yang gagal.
+
 Panduan lengkap ada di folder **[`setup/`](setup/)**: pre-setup (driver,
 Docker, GPU di container, NVMe), database, MQTT, image, model, Triton,
 dashboard, tambah kamera, dan checklist verifikasi. Tiap langkah punya

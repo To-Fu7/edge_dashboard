@@ -5,6 +5,9 @@
 > relevan karena container kamera tetap decode video di CPU; bagian
 > NVDEC/TensorRT export di dalam container kamera sudah tidak berlaku.
 > Target deployment yang didukung adalah Linux (lihat [00-pre-setup.md](00-pre-setup.md)).
+> Untuk mencoba di Windows, pakai `setup\install.ps1`: script itu memeriksa WSL2,
+> Docker Desktop, dan driver NVIDIA, lalu menjalankan `install.sh` di dalam WSL2.
+> Clone repo **di dalam WSL** (`\\wsl.localhost\<distro>\home\...`), bukan di `C:\`.
 
 Catatan keterbatasan saat menjalankan service python-counting di **Windows 11 + Docker
 Desktop (WSL2 backend)** dengan GPU **NVIDIA RTX A2000 12GB**. Semua masalah di bawah

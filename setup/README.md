@@ -1,8 +1,64 @@
 # Setup EPiWalk
 
 Panduan memasang EPiWalk dari mesin kosong sampai kamera pertama menghitung
-orang. Kerjakan **berurutan**; tiap langkah bergantung pada langkah
-sebelumnya.
+orang.
+
+## Cara cepat: installer otomatis
+
+```bash
+# Linux x86_64 (GPU NVIDIA atau CPU) dan Jetson
+git clone <url-repo> && cd dashboard-python-counting && git checkout edge
+./setup/install.sh
+```
+
+```powershell
+# Windows 10/11 (menjalankan install.sh di dalam WSL2)
+powershell -ExecutionPolicy Bypass -File setup\install.ps1
+```
+
+Installer mendeteksi platform sendiri, lalu menjalankan langkah 0–8 di bawah:
+
+| Platform yang terdeteksi | Hardware mode | Image Triton |
+|---|---|---|
+| Linux x86_64 + GPU NVIDIA | `server` | `tritonserver:24.08-py3` |
+| Linux x86_64 tanpa GPU | `cpu` (onnxruntime) | `tritonserver:24.08-py3` |
+| Jetson JetPack 6 (L4T R36) | `jetson` | `tritonserver:24.08-py3-igpu` |
+| Jetson JetPack 5 (L4T R35) | `jetson` | `tritonserver:23.12-py3-igpu` |
+| Windows → WSL2 + Docker Desktop | `server` / `cpu` | sama dengan x86_64 (**eksperimental**) |
+
+Yang dilakukan installer:
+
+- **Cek & perbaiki prasyarat**: Docker, Compose, driver NVIDIA, NVIDIA
+  Container Toolkit + CDI, tes GPU di container, ruang disk ≥ 40 GB, peringatan
+  kalau data ada di HDD, RAM, dan port yang bentrok. Instalasi paket selalu
+  ditanyakan dulu (`--yes` = setuju semua).
+- **Database & MQTT**: pakai service bawaan, atau otomatis memakai container
+  `env_services_timescaledb` / `env_services_mqtt` yang sudah ada (dan
+  menyambungkannya ke network `envisions`).
+- **Semua langkah setup**: image, dashboard, settings (hardware mode, DB, MQTT,
+  debug off) lewat API dashboard, export model, engine TensorRT, Triton, lalu
+  `batch_check` memakai `python-counting/1.mp4`.
+- **Menangkap semua error**: setiap kegagalan menampilkan langkah yang gagal,
+  perintahnya, 15 baris log terakhir, file dokumen yang relevan, dan path log
+  lengkap (`setup/logs/`). Jalankan ulang `./setup/install.sh` dan installer
+  **melanjutkan dari langkah yang gagal**.
+
+| Opsi | Fungsi |
+|---|---|
+| `--yes` | Tanpa pertanyaan; password dibuat otomatis |
+| `--from <langkah>` / `--only <langkah>` | Ulang dari / hanya satu langkah: `prereq config infra images dashboard settings models engines triton verify` |
+| `--reset` | Lupakan progres dan jawaban sebelumnya |
+| `--model yolo26m --imgsz 1280` | Model lain (default `yolo26s`, 640) |
+| `--external-db`, `--external-mqtt` | Pakai DB / broker yang sudah ada |
+
+Yang tetap manual: memindahkan data ke NVMe (installer hanya memperingatkan),
+reboot setelah instal driver, dan menambah kamera (langkah 7).
+
+## Langkah manual
+
+Kerjakan **berurutan**; tiap langkah bergantung pada langkah sebelumnya.
+Installer menjalankan langkah yang sama, jadi bagian **Kalau error** di tiap
+file juga berlaku saat memakai installer.
 
 | # | File | Hasil akhir langkah | Perkiraan waktu |
 |---|---|---|---|

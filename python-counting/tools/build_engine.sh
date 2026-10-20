@@ -9,11 +9,16 @@
 #   MODEL_REPO   model repository root (default /models)
 #   FORCE_BUILD  set to 1 to rebuild even if model.plan is newer than model.onnx
 #   TRT_BACKEND  set to "onnx" to skip TRT and keep onnxruntime configs (cpu mode)
+#   QUEUE_DELAY_US  dynamic_batching max_queue_delay_microseconds (default 1000)
 set -euo pipefail
 
 MODEL_REPO="${MODEL_REPO:-/models}"
 FORCE_BUILD="${FORCE_BUILD:-0}"
 TRT_BACKEND="${TRT_BACKEND:-trt}"
+# Dynamic-batching window written into each built model's config.pbtxt. 1000 µs
+# is what production runs with (14 cameras still fill batches); raise it for
+# fewer cameras on a busy GPU, lower it for latency.
+QUEUE_DELAY_US="${QUEUE_DELAY_US:-1000}"
 
 if [ "$TRT_BACKEND" = "onnx" ]; then
     echo "[build_engine] TRT_BACKEND=onnx — leaving onnxruntime configs as-is (cpu mode)."
@@ -78,7 +83,7 @@ for onnx in "$MODEL_REPO"/*/1/model.onnx; do
 
     batching_block=""
     if [ "$max_batch" != "0" ]; then
-        batching_block=$'dynamic_batching {\n  max_queue_delay_microseconds: 5000\n}'
+        batching_block=$'dynamic_batching {\n  max_queue_delay_microseconds: '"$QUEUE_DELAY_US"$'\n}'
     fi
 
     cat > "$model_dir/config.pbtxt" <<EOF

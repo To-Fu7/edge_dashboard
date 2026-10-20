@@ -1,0 +1,6 @@
+# Shell scripts run inside Linux containers / WSL: a CRLF checkout on Windows
+# breaks them ("set: pipefail: invalid option").
+*.sh text eol=lf
+setup/install.sh text eol=lf
+# PowerShell is happiest with CRLF.
+*.ps1 text eol=crlf

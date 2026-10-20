@@ -14,7 +14,7 @@ export async function GET() {
 export async function PUT(request: Request) {
   try {
     const prev = readSettings();
-    const body = await request.json();
+    const { applyHardwareMode, ...body } = await request.json();
 
     // Merge, don't replace — a caller sending a partial body (e.g. just
     // { triton: { imageTag } }) must not blow away every other section
@@ -35,14 +35,17 @@ export async function PUT(request: Request) {
 
     const modeChanged = body.hardwareMode && body.hardwareMode !== prev.hardwareMode;
     const tritonTagChanged = body.triton?.imageTag && body.triton.imageTag !== prev.triton.imageTag;
-    if (modeChanged || tritonTagChanged) {
+    // applyHardwareMode: regenerate the triton/builder services even when the
+    // values didn't change — used by setup/install.sh on a fresh checkout, whose
+    // committed docker-compose.yml always carries the x86 server image.
+    if (modeChanged || tritonTagChanged || applyHardwareMode) {
       // regenerates every camera service AND the triton/model-builder services
       applyHardwareModeToAll(body.hardwareMode ?? prev.hardwareMode, body.triton?.imageTag);
     }
     return NextResponse.json({
       success: true,
       // jetson/server engines are TRT-version-specific — prompt a rebuild in the UI
-      engineRebuildRecommended: Boolean(modeChanged || tritonTagChanged),
+      engineRebuildRecommended: Boolean(modeChanged || tritonTagChanged || applyHardwareMode),
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
