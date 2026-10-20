@@ -57,6 +57,7 @@ done
 
 | Gejala | Penyebab | Solusi |
 |---|---|---|
+| Health check `/v2/health/ready` = 400, log: `failed to load all models` padahal model utama `READY` | Ada model opsional yang tidak bisa di-load (mis. `arcface_112` tanpa `model.onnx`), dan Triton jalan dengan `strict_readiness` default (true). Kamera ikut menganggap Triton mati | Command Triton harus memuat `--strict-readiness=false` (default compose sekarang). Dari dashboard: Settings → Hardware Mode → simpan (membuat ulang service), lalu restart Triton. Atau hapus folder model yang tidak dipakai dari `models/` |
 | Health check bukan 200 / connection refused | Triton belum selesai load atau crash | `docker logs triton-inference-server`; load semua model bisa makan 1–2 menit |
 | Model `UNAVAILABLE`: *serialization ... version* / *engine plan file is not compatible* | Engine dibuild di GPU atau versi TensorRT lain | Build ulang: `docker compose --profile build run --rm -e FORCE_BUILD=1 triton-model-builder` |
 | `model does not support batching` (ArcFace) | `max_batch_size` > 0 untuk model dengan batch tetap | Set `max_batch_size: 0` di `models/arcface_112/config.pbtxt` |

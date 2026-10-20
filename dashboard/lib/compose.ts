@@ -159,7 +159,13 @@ export function buildTritonServiceDefinition(
     // an incrementally-populated repo) must not take down every OTHER model that
     // loaded fine. Without this, Triton's default exit-on-any-failure behavior
     // means one missing weight file kills the whole inference stack.
-    command: 'tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false',
+    // --strict-readiness=false: same reasoning for /v2/health/ready — with the
+    // default (true) one optional model that can't load (e.g. arcface_112 whose
+    // config.pbtxt is in git but whose ONNX was never added) makes the whole
+    // server report not-ready, so every camera (is_server_ready) and the
+    // dashboard status treat Triton as down. Per-model readiness is still
+    // checked separately (is_model_ready / repository index).
+    command: 'tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false --strict-readiness=false',
     shm_size: '1gb',
     ports: ['8000:8000', '8001:8001', '8002:8002'],
     volumes: [`${HOST_PYTHON_COUNTING_DIR}/models:/models`],

@@ -746,7 +746,9 @@ step_engines() {
 step_triton() {
   info "Starting Triton..."
   compose_pc up -d triton
-  wait_for 300 "Triton is ready" sh -c '[ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/v2/health/ready)" = 200 ]' \
+  # Wait for OUR model, not the server-wide ready flag: an optional model that
+  # can't load (e.g. arcface_112 without its ONNX) shouldn't block the install.
+  wait_for 300 "Triton is serving $MODEL_NAME" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/v2/models/$MODEL_NAME/ready)\" = 200 ]" \
     || { dk logs --tail 60 triton-inference-server || true
          die "Triton did not become ready" "See the Triton log above. Engine/version errors: re-run with --from engines after FORCE_BUILD."; }
   local notready
