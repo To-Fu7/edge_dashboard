@@ -39,7 +39,6 @@ module.exports = {
     editorTheme: {
         page: {
             title: 'Edge Automation',
-            css: '/data/custom-theme.css',
         },
         header: {
             title: 'Edge Automation',

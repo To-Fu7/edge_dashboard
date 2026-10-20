@@ -107,7 +107,6 @@ services:
     volumes:
       - nodered-data:/data
       - ./nodered/settings.js:/data/settings.js:ro
-      - ./nodered/custom-theme.css:/data/custom-theme.css:ro
     # No host port: the dashboard proxies /nodered (admin only). For local
     # debugging add `ports: ["1880:1880"]` temporarily — that bypasses the login.
     healthcheck:

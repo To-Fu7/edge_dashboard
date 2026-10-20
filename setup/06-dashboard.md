@@ -99,7 +99,7 @@ Lalu **Settings → General**: nama dashboard.
 | `Bind for 0.0.0.0:3001 failed: port is already allocated` | Port dipakai service lain | Ganti `"3001:3000"` di compose ke port lain |
 | `edge-portfwd-nginx` gagal start: *address already in use* | Ada service lain di port 5500–5600 | Geser rentang port di compose **dan** `LISTEN_PORT_MIN/MAX` di `lib/portforward.ts` |
 | Halaman Automation: *Node-RED unreachable* / editor 502 | Container `edge-nodered` belum jalan atau belum healthy | `docker compose ps nodered`, `docker compose logs nodered`, lalu `docker compose up -d nodered` |
-| Editor Node-RED tampil tapi tema default / panel debug *disconnected* | Container restart saat tab terbuka, atau WebSocket tidak ter-proxy | Hard refresh (Ctrl+Shift+R). Pastikan log dashboard berisi `proxying /nodered -> http://edge-nodered:1880` |
+| Panel debug Node-RED *disconnected* | Container restart saat tab terbuka, atau WebSocket tidak ter-proxy | Hard refresh (Ctrl+Shift+R). Pastikan log dashboard berisi `proxying /nodered -> http://edge-nodered:1880` |
 | Detection Dashboard: Triton offline | Triton belum jalan, atau tidak satu network | Start Triton ([05](05-triton.md)); `docker network inspect envisions` harus memuat dashboard dan `triton-inference-server` |
 | Kartu GPU menampilkan N/A | Metrics Triton (`:8002`) tidak terjangkau | Sama seperti di atas; metrics hanya ada saat Triton jalan |
 | Halaman apa pun: *Login unavailable: Database ... is not reachable* (503) | Dashboard tidak bisa konek ke database `edge` | Cek `EDGE_DB_*` di `.env` dan `curl localhost:3001/api/health`; lihat [01 → Kalau error](01-database.md#kalau-error) |
