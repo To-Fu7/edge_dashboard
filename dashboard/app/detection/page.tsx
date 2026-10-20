@@ -199,7 +199,7 @@ function HomePageContent() {
           <Camera className="w-12 h-12 text-muted-foreground mb-4" />
           <p className="text-muted-foreground text-sm mb-4">No cameras configured yet.</p>
           {admin && (
-            <Link href="/detection/devices">
+            <Link href="/devices">
               <Button size="sm">Add your first camera</Button>
             </Link>
           )}
@@ -466,7 +466,7 @@ function DeviceCard({
   const live = hb && !hb.stale && device.status === 'running';
   const applying = live && hb.config_version !== null && hb.config_version < device.configVersion;
   const isLoading = !!actionLoading;
-  const href = admin ? `/detection/devices/${device.deviceCode}` : '/stream';
+  const href = admin ? `/devices/${device.deviceCode}` : '/stream';
 
   return (
     <Card className={cn('flex flex-col', state === 'degraded' && 'border-amber-500/40', state === 'offline' && 'border-red-500/40')}>
@@ -533,7 +533,7 @@ function DeviceCard({
             <Button size="sm" variant="outline" onClick={() => onAction(device.deviceCode, 'restart')} disabled={isLoading} aria-label={`Restart ${device.deviceCode}`}>
               <RotateCcw className="w-3.5 h-3.5" />
             </Button>
-            <Link href={`/detection/devices/${device.deviceCode}`}>
+            <Link href={`/devices/${device.deviceCode}`}>
               <Button size="sm" variant="ghost">Edit</Button>
             </Link>
           </div>

@@ -24,22 +24,21 @@ interface NavGroup {
   items: NavItem[];
 }
 
-// Main area: camera source + live streaming — usable with no detection
-// pipeline running at all.
+// Main area: live view, the detection dashboard, and the camera list (one page
+// per camera, with its stream and detection settings together).
 const MAIN_ITEMS: NavItem[] = [
   { href: '/stream', label: 'Stream', icon: Tv2 },
+  { href: '/detection', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { href: '/devices', label: 'Devices', icon: Camera },
   { href: '/automation', label: 'Automation', icon: Workflow },
 ];
 
-// Everything that drives python-counting / Triton (counting, APD, fire/smoke,
-// face, intrusion), its models and its settings.
+// The python-counting / Triton tooling (counting, APD, fire/smoke, face,
+// intrusion): models, face enrollment and the pipeline settings.
 const DETECTION_GROUP: NavGroup = {
   label: 'Detection',
   icon: ScanEye,
   items: [
-    { href: '/detection', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-    { href: '/detection/devices', label: 'Devices', icon: Camera },
     { href: '/faces', label: 'Face Enrollment', icon: UserSquare2 },
     { href: '/inference', label: 'Build & Inference', icon: HammerIcon },
     { href: '/model-test', label: 'Model Test', icon: FlaskConical },

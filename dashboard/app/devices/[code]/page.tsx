@@ -18,7 +18,6 @@ import { Play, Square, RotateCcw, ArrowLeft, Loader2, ArrowDownToLine, ArrowUpFr
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { DeviceEnvConfig, ContainerStatus } from '@/lib/types';
-import { useDetectionView } from '@/lib/view-mode';
 import { toReachableStreamUrl } from '@/lib/utils';
 
 interface DrawnLine { label: string; p1: { x: number; y: number }; p2: { x: number; y: number } }
@@ -147,18 +146,17 @@ function drawnLinesToEnv(lines: DrawnLine[]): Record<string, string> {
   return result;
 }
 
+const TABS = ['basic', 'stream', 'lines', 'logs', 'history'];
+
 export default function DeviceDetailPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const router = useRouter();
-  const { isDetection, devicesBase } = useDetectionView();
 
   const [activeTab, setActiveTab] = useState('basic');
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
-    // Ignore stale/bookmarked links into tabs this area doesn't render.
-    const available = isDetection ? ['basic', 'lines', 'logs', 'history'] : ['basic', 'stream'];
-    if (tab && available.includes(tab)) setActiveTab(tab);
-  }, [isDetection]);
+    if (tab && TABS.includes(tab)) setActiveTab(tab);
+  }, []);
 
   const [env, setEnv] = useState<Partial<DeviceEnvConfig>>({});
   const [inheritedEnv, setInheritedEnv] = useState<Record<string, string> | null>(null);
@@ -195,7 +193,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   const fetchDevice = useCallback(async () => {
     try {
       const res = await fetch(`/api/devices/${code}`);
-      if (res.status === 404) { router.push(devicesBase); return; }
+      if (res.status === 404) { router.push('/devices'); return; }
       const data = await res.json();
       setEnv(data.env);
       setInheritedEnv(data.inheritedEnv ?? null);
@@ -211,7 +209,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
     } finally {
       setLoading(false);
     }
-  }, [code, router, devicesBase]);
+  }, [code, router]);
 
   useEffect(() => {
     fetchDevice();
@@ -323,7 +321,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       if (!res.ok) throw new Error(data.error);
       if (data.codeChanged) {
         toast.success(`Saved. Code changed to ${data.deviceCode} — the camera container was recreated under the new name.`);
-        router.replace(`${devicesBase}/${data.deviceCode}${isDetection ? '' : '?tab=stream'}`);
+        router.replace(`/devices/${data.deviceCode}?tab=${activeTab}`);
         return;
       }
       toast.success(data.applied
@@ -360,7 +358,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
     <InheritedCtx.Provider value={{ inherited: inheritedEnv, env, setField }}>
     <div className="p-6 space-y-6 max-w-4xl">
       <div className="flex items-center gap-4">
-        <Link href={devicesBase}>
+        <Link href="/devices">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" /> Devices
           </Button>
@@ -369,13 +367,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           <h1 className="text-xl font-semibold">{env.DEVICE_NAME || code}</h1>
           <p className="text-xs text-muted-foreground font-mono">{code}{configVersion ? ` · config v${configVersion}` : ''}</p>
         </div>
-        <Link href={isDetection ? `/devices/${code}` : `/detection/devices/${code}`}>
-          <Button size="sm" variant="ghost">
-            {isDetection ? 'Stream settings' : 'Detection settings'}
-          </Button>
-        </Link>
-        {isDetection && (
-        <>
         <StatusBadge status={status} />
         <div className="flex gap-1.5">
           {status !== 'running' ? (
@@ -394,17 +385,15 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             {actionLoading === 'restart' ? '...' : 'Restart'}
           </Button>
         </div>
-        </>
-        )}
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="basic">Basic Settings</TabsTrigger>
-          {isDetection && <TabsTrigger value="lines">Line Configuration</TabsTrigger>}
-          {!isDetection && <TabsTrigger value="stream">Stream</TabsTrigger>}
-          {isDetection && <TabsTrigger value="logs">Logs</TabsTrigger>}
-          {isDetection && <TabsTrigger value="history">History</TabsTrigger>}
+          <TabsTrigger value="stream">Stream</TabsTrigger>
+          <TabsTrigger value="lines">Line Configuration</TabsTrigger>
+          <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         {/* ── BASIC SETTINGS ── */}
@@ -429,8 +418,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             </FormField>
           </Section>
 
-          {isDetection && (
-          <>
           <Section title="MQTT Topics">
             <div className="grid grid-cols-2 gap-4">
               <FormField envKey="MQTT_TOPIC" label="Activity Topic">
@@ -707,8 +694,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
               </div>
             </div>
           </Section>
-          </>
-          )}
 
           <div className="flex justify-end">
             <Button onClick={handleSave} disabled={saving}>
@@ -718,7 +703,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
         </TabsContent>
 
         {/* ── LINE CONFIGURATION ── */}
-        {isDetection && (
         <TabsContent value="lines" className="space-y-6 pt-4">
           {(env.DETECTION_MODE || 'line_crossing') === 'line_crossing' ? (
             <>
@@ -843,7 +827,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             </Button>
           </div>
         </TabsContent>
-        )}
 
         {/* ── STREAM (MSE/HLS/WebRTC + Port Forward) ── */}
         <TabsContent value="stream" className="space-y-6 pt-4">
@@ -856,7 +839,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           </div>
         </TabsContent>
 
-        {isDetection && (
         <TabsContent value="logs" className="pt-4 space-y-4">
           {status === 'running' && (
             <Section title="Live Stream">
@@ -928,21 +910,18 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
             </div>
           </Section>
         </TabsContent>
-        )}
 
-        {isDetection && (
         <TabsContent value="history" className="pt-4">
           {activeTab === 'history' && (
             <HistoryPanel
               code={code}
               onRestored={(newCode) => {
-                if (newCode !== code) router.replace(`${devicesBase}/${newCode}?tab=history`);
+                if (newCode !== code) router.replace(`/devices/${newCode}?tab=history`);
                 else fetchDevice();
               }}
             />
           )}
         </TabsContent>
-        )}
       </Tabs>
     </div>
     </InheritedCtx.Provider>
