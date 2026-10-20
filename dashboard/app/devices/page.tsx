@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StatusBadge } from '@/components/StatusBadge';
-import { Plus, Pencil, Trash2, RefreshCw, Play, Square, RotateCcw, Layers } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, Play, Square, RotateCcw, Layers, Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ContainerStatus } from '@/lib/types';
 import { useDetectionView } from '@/lib/view-mode';
@@ -29,13 +29,31 @@ export default function DevicesPage() {
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
   const [fullRestarting, setFullRestarting] = useState(false);
 
+  async function importFile(file: File) {
+    try {
+      const data = JSON.parse(await file.text());
+      const res = await fetch('/api/devices/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data, keepIds: true }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error);
+      if (result.created.length) toast.success(`Imported ${result.created.join(', ')}`);
+      for (const s of result.skipped as { code: string; reason: string }[]) toast.warning(`Skipped ${s.code}: ${s.reason}`);
+      fetchDevices();
+    } catch (e) {
+      toast.error(`Import failed: ${(e as Error).message}`);
+    }
+  }
+
   async function fullRestart() {
     setFullRestarting(true);
     try {
       const res = await fetch('/api/compose/up', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      toast.success('docker compose up -d completed');
+      toast.success('All cameras started');
       setTimeout(fetchDevices, 2000);
     } catch (e) {
       toast.error(`Full restart failed: ${e}`);
@@ -78,7 +96,7 @@ export default function DevicesPage() {
   }
 
   async function deleteDevice(code: string) {
-    if (!confirm(`Delete camera "${code}"? This will stop the container and remove its config files.`)) return;
+    if (!confirm(`Delete camera "${code}"? Its container, configuration history and port forwards are removed. Counting results stay in the database.`)) return;
     try {
       const res = await fetch(`/api/devices/${code}`, { method: 'DELETE' });
       const data = await res.json();
@@ -107,9 +125,25 @@ export default function DevicesPage() {
           {isDetection && (
           <Button variant="outline" size="sm" onClick={fullRestart} disabled={fullRestarting}>
             <Layers className={`w-4 h-4 mr-2 ${fullRestarting ? 'animate-pulse' : ''}`} />
-            {fullRestarting ? 'Running...' : 'Full Restart'}
+            {fullRestarting ? 'Starting...' : 'Start all'}
           </Button>
           )}
+          <a href="/api/devices/export" download>
+            <Button variant="outline" size="sm" title="Download every camera's configuration as JSON">
+              <Download className="w-4 h-4 mr-2" />Export
+            </Button>
+          </a>
+          <label className="inline-flex">
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="sr-only"
+              onChange={e => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }}
+            />
+            <span className="inline-flex items-center rounded-md border border-border px-3 h-8 text-sm cursor-pointer hover:bg-accent" title="Add cameras from an export file (existing codes are skipped)">
+              <Upload className="w-4 h-4 mr-2" />Import
+            </span>
+          </label>
           <Button size="sm" onClick={() => setShowAdd(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Add Camera

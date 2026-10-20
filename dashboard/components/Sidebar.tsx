@@ -5,9 +5,11 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Camera, Settings, ScrollText, Activity, Tv2, UserSquare2, HammerIcon, FlaskConical,
-  Workflow, ScanEye, ChevronRight, SlidersHorizontal, Network,
+  Workflow, ScanEye, ChevronRight, SlidersHorizontal, Network, Users, LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { canAccess } from '@/lib/permissions';
+import type { Role } from '@/lib/auth-token';
 
 interface NavItem {
   href: string;
@@ -52,8 +54,13 @@ const SETTINGS_GROUP: NavGroup = {
     { href: '/settings', label: 'General', icon: SlidersHorizontal, exact: true },
     { href: '/settings/logs', label: 'Logs', icon: ScrollText },
     { href: '/settings/nginx', label: 'Nginx', icon: Network },
+    { href: '/settings/users', label: 'Users', icon: Users },
   ],
 };
+
+function visible(items: NavItem[], role: Role | null): NavItem[] {
+  return role ? items.filter(i => canAccess(role, 'GET', i.href)) : [];
+}
 
 function isActive(item: NavItem, pathname: string) {
   return item.exact ? pathname === item.href : pathname.startsWith(item.href);
@@ -123,13 +130,30 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
 export function Sidebar() {
   const pathname = usePathname() ?? '';
   const [appName, setAppName] = useState('Edge');
+  const [me, setMe] = useState<{ username: string; role: Role } | null>(null);
 
   useEffect(() => {
+    if (pathname === '/login') return;
+    fetch('/api/auth/me')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.user) setMe(d.user); })
+      .catch(() => {});
     fetch('/api/settings')
       .then(r => r.json())
       .then(d => { if (d.settings?.appName) setAppName(d.settings.appName); })
       .catch(() => {});
-  }, []);
+  }, [pathname]);
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    window.location.href = '/login';
+  }
+
+  if (pathname === '/login') return null;
+  const role = me?.role ?? null;
+  const groups = [DETECTION_GROUP, SETTINGS_GROUP]
+    .map(g => ({ ...g, items: visible(g.items, role) }))
+    .filter(g => g.items.length > 0);
 
   return (
     <aside className="flex flex-col h-full w-60 border-r border-border bg-background">
@@ -142,15 +166,26 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
-        {MAIN_ITEMS.map(item => (
+        {visible(MAIN_ITEMS, role).map(item => (
           <NavLink key={item.href} item={item} pathname={pathname} />
         ))}
-        <NavDropdown group={DETECTION_GROUP} pathname={pathname} />
-        <NavDropdown group={SETTINGS_GROUP} pathname={pathname} />
+        {groups.map(g => <NavDropdown key={g.label} group={g} pathname={pathname} />)}
       </nav>
 
-      <div className="px-5 py-3 border-t border-border">
-        <p className="text-xs text-muted-foreground">v3-dashboard</p>
+      <div className="px-3 py-3 border-t border-border flex items-center gap-2">
+        <div className="flex-1 min-w-0 px-2">
+          <p className="text-sm truncate">{me?.username ?? '…'}</p>
+          <p className="text-xs text-muted-foreground">{me?.role === 'admin' ? 'Admin' : me ? 'Viewer' : ''}</p>
+        </div>
+        <button
+          type="button"
+          onClick={logout}
+          className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent"
+          aria-label="Sign out"
+          title="Sign out"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </aside>
   );

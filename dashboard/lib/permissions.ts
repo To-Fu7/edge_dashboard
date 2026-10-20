@@ -19,7 +19,7 @@ const USER_PAGES = [/^\/$/, /^\/stream$/, /^\/detection$/];
 const USER_API_GET = [
   /^\/api\/auth\/me$/,
   /^\/api\/devices$/,
-  /^\/api\/devices\/[^/]+$/,
+  /^\/api\/devices\/(?!export$|import$)[^/]+$/,      // device detail (env redacted for user) — not the export
   /^\/api\/devices\/[^/]+\/(counts|stream-urls|bbox)$/,
   /^\/api\/stream\/[^/]+(\/annotated)?$/,
   /^\/api\/system$/,

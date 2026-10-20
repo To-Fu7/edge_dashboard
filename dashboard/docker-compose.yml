@@ -10,8 +10,7 @@ services:
     memswap_limit: 4g
     ports:
       - "3001:3000"
-    # Same as the camera containers: lets Settings → PostgreSQL use
-    # host.docker.internal (the default) for Face Enrollment's DB access.
+    # Lets EDGE_DB_HOST=host.docker.internal reach a PostgreSQL published on the host.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # runtime: nvidia
@@ -24,6 +23,17 @@ services:
       - PYTHON_COUNTING_DIR=/python-counting
       - HOST_PYTHON_COUNTING_DIR=${HOST_PYTHON_COUNTING_DIR}
       - SETTINGS_FILE=/app/data/settings.json
+      # Database `edge` (written by setup/install.sh). EDGE_DEVICE_DB_* is the
+      # restricted role handed to camera containers.
+      - EDGE_DB_HOST=${EDGE_DB_HOST:-env_services_timescaledb}
+      - EDGE_DB_PORT=${EDGE_DB_PORT:-5432}
+      - EDGE_DB_NAME=${EDGE_DB_NAME:-edge}
+      - EDGE_DB_USER=${EDGE_DB_USER:-edge_owner}
+      - EDGE_DB_PASSWORD=${EDGE_DB_PASSWORD}
+      - EDGE_DEVICE_DB_USER=${EDGE_DEVICE_DB_USER:-edge_device}
+      - EDGE_DEVICE_DB_PASSWORD=${EDGE_DEVICE_DB_PASSWORD}
+      - EDGE_AUTH_SECRET=${EDGE_AUTH_SECRET:-}
+      - TZ=Asia/Jakarta
       - NODERED_URL=http://nodered:1880
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=utility
@@ -97,10 +107,8 @@ services:
       - nodered-data:/data
       - ./nodered/settings.js:/data/settings.js:ro
       - ./nodered/custom-theme.css:/data/custom-theme.css:ro
-    ports:
-      - "1880:1880"   # direct access for local dev / debugging only — the
-                        # dashboard proxies /automation to this internally
-                        # over the envisions network in normal use
+    # No host port: the dashboard proxies /nodered (admin only). For local
+    # debugging add `ports: ["1880:1880"]` temporarily — that bypasses the login.
     networks:
       - envisions
 

@@ -51,7 +51,7 @@ export interface DeviceSummary {
   enabled: boolean;
   configVersion: number;
   rtspUrl?: string;
-  heartbeat: (DeviceStatusRow & { stale: boolean }) | null;
+  heartbeat: (DeviceStatusRow & { stale: boolean; age_s: number }) | null;
 }
 
 /** A heartbeat older than this means the container stopped reporting. */
@@ -72,7 +72,10 @@ export function deviceSummary(
     enabled: d.enabled,
     configVersion: d.config_version,
     ...(admin ? { rtspUrl: d.effective_env.RTSP_URL ?? '' } : {}),
-    heartbeat: hb ? { ...hb, stale: Date.now() - new Date(hb.updated_at).getTime() > HEARTBEAT_STALE_MS } : null,
+    heartbeat: hb ? (() => {
+      const ageMs = Date.now() - new Date(hb.updated_at).getTime();
+      return { ...hb, stale: ageMs > HEARTBEAT_STALE_MS, age_s: Math.round(ageMs / 1000) };
+    })() : null,
   };
 }
 

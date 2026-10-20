@@ -76,6 +76,7 @@ export async function sessionUser(cookieValue: string | undefined | null): Promi
 }
 
 export async function deleteSession(cookieValue: string | undefined | null): Promise<void> {
+  forgetSession(cookieValue);
   const p = verifyToken(cookieValue);
   if (p) await query('DELETE FROM sessions WHERE id = $1', [hashSessionToken(p.s)]);
 }
@@ -101,6 +102,22 @@ export function recordLoginFailure(key: string): void {
 
 export function clearLoginFailures(key: string): void {
   failures.delete(key);
+}
+
+// --------------------------------------------------- session cache ----
+// proxy.ts caches session lookups for 30 s. It lives on globalThis so the
+// logout route and user changes (same process, separate bundles) can drop
+// entries immediately instead of waiting for the TTL.
+type CacheEntry = { user: SessionUser | null; until: number };
+const gc = globalThis as unknown as { __edgeSessionCache?: Map<string, CacheEntry> };
+export const sessionCache: Map<string, CacheEntry> = gc.__edgeSessionCache ??= new Map();
+
+export function forgetSession(cookieValue: string | undefined | null): void {
+  if (cookieValue) sessionCache.delete(cookieValue);
+}
+
+export function forgetAllSessions(): void {
+  sessionCache.clear();
 }
 
 // ---------------------------------------------------- request → user ----

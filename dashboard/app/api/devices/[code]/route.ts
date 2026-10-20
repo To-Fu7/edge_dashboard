@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { requireDevice, updateDevice, deleteDevice } from '@/lib/devices';
 import { deviceContainerStatuses, ensureContainer, removeDeviceContainer, startDevice } from '@/lib/device-runtime';
 import { apiError, inheritanceInfo, publicEnv, syncStreamRegistration } from '@/lib/device-api';
-import { containerNameFor } from '@/lib/device-config';
+import { containerNameFor, computeEffective, globalEnv } from '@/lib/device-config';
+import { readSettings } from '@/lib/settings';
 import { removeCameraStream } from '@/lib/stream-gateway';
 import { deployPortForwardConfig } from '@/lib/portforward';
 import { isAdmin, requestUser } from '@/lib/auth';
@@ -23,7 +24,14 @@ export async function GET(request: Request, { params }: Ctx) {
       enabled: device.enabled,
     };
     if (!isAdmin(request)) return NextResponse.json({ ...base, env: publicEnv(device.effective_env) });
-    return NextResponse.json({ ...base, env: device.effective_env, ...inheritanceInfo(device) });
+    // What each field would be without this device's overrides — the page marks
+    // fields equal to it as "global" and offers "reset" on the others. Per-type
+    // topics are derived from the device's own MQTT_TOPIC when that's overridden.
+    const settings = await readSettings();
+    const topic = device.overrides.MQTT_TOPIC;
+    const inheritedEnv = computeEffective(device, topic !== undefined ? { MQTT_TOPIC: topic } : {}, settings);
+    inheritedEnv.MQTT_TOPIC = globalEnv(settings, device.code).MQTT_TOPIC;
+    return NextResponse.json({ ...base, env: device.effective_env, inheritedEnv, ...inheritanceInfo(device) });
   } catch (e) {
     return apiError(e);
   }

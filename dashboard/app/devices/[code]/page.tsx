@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef, use } from 'react';
+import { useEffect, useState, useCallback, useRef, use, createContext, useContext } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -156,11 +156,13 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
     // Ignore stale/bookmarked links into tabs this area doesn't render.
-    const available = isDetection ? ['basic', 'lines', 'logs'] : ['basic', 'stream'];
+    const available = isDetection ? ['basic', 'lines', 'logs', 'history'] : ['basic', 'stream'];
     if (tab && available.includes(tab)) setActiveTab(tab);
   }, [isDetection]);
 
   const [env, setEnv] = useState<Partial<DeviceEnvConfig>>({});
+  const [inheritedEnv, setInheritedEnv] = useState<Record<string, string> | null>(null);
+  const [configVersion, setConfigVersion] = useState(0);
   const [status, setStatus] = useState<ContainerStatus>('unknown');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -196,6 +198,8 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       if (res.status === 404) { router.push(devicesBase); return; }
       const data = await res.json();
       setEnv(data.env);
+      setInheritedEnv(data.inheritedEnv ?? null);
+      setConfigVersion(data.configVersion ?? 0);
       setStatus(data.status);
       setLines(envLinesToDrawn(data.env));
       setZones(envZonesToDrawn(data.env));
@@ -317,7 +321,15 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      toast.success('Settings saved. Restart service to apply changes.');
+      if (data.codeChanged) {
+        toast.success(`Saved. Code changed to ${data.deviceCode} — the camera container was recreated under the new name.`);
+        router.replace(`${devicesBase}/${data.deviceCode}${isDetection ? '' : '?tab=stream'}`);
+        return;
+      }
+      toast.success(data.applied
+        ? `Saved as config v${data.configVersion} — the running camera picks it up within seconds.`
+        : 'Saved (nothing changed).');
+      fetchDevice();
     } catch (e) {
       toast.error(`Failed to save: ${e}`);
     } finally {
@@ -345,6 +357,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
   }
 
   return (
+    <InheritedCtx.Provider value={{ inherited: inheritedEnv, env, setField }}>
     <div className="p-6 space-y-6 max-w-4xl">
       <div className="flex items-center gap-4">
         <Link href={devicesBase}>
@@ -354,7 +367,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
         </Link>
         <div className="flex-1">
           <h1 className="text-xl font-semibold">{env.DEVICE_NAME || code}</h1>
-          <p className="text-xs text-muted-foreground font-mono">{code}</p>
+          <p className="text-xs text-muted-foreground font-mono">{code}{configVersion ? ` · config v${configVersion}` : ''}</p>
         </div>
         <Link href={isDetection ? `/devices/${code}` : `/detection/devices/${code}`}>
           <Button size="sm" variant="ghost">
@@ -391,6 +404,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           {isDetection && <TabsTrigger value="lines">Line Configuration</TabsTrigger>}
           {!isDetection && <TabsTrigger value="stream">Stream</TabsTrigger>}
           {isDetection && <TabsTrigger value="logs">Logs</TabsTrigger>}
+          {isDetection && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
 
         {/* ── BASIC SETTINGS ── */}
@@ -419,25 +433,25 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           <>
           <Section title="MQTT Topics">
             <div className="grid grid-cols-2 gap-4">
-              <FormField label="Activity Topic">
+              <FormField envKey="MQTT_TOPIC" label="Activity Topic">
                 <Input value={env.MQTT_TOPIC || ''} onChange={e => setField('MQTT_TOPIC', e.target.value)} />
               </FormField>
-              <FormField label="Interval Topic">
+              <FormField envKey="MQTT_INTERVAL_TOPIC" label="Interval Topic">
                 <Input value={env.MQTT_INTERVAL_TOPIC || ''} onChange={e => setField('MQTT_INTERVAL_TOPIC', e.target.value)} />
               </FormField>
-              <FormField label="Interval Minutes">
+              <FormField envKey="MQTT_INTERVAL_MINUTES" label="Interval Minutes">
                 <Input type="number" value={env.MQTT_INTERVAL_MINUTES || '5'} onChange={e => setField('MQTT_INTERVAL_MINUTES', e.target.value)} />
               </FormField>
-              <FormField label="Daily Send Time">
+              <FormField envKey="DAILY_SEND_TIME" label="Daily Send Time">
                 <Input value={env.DAILY_SEND_TIME || '23:59'} onChange={e => setField('DAILY_SEND_TIME', e.target.value)} placeholder="23:59" />
               </FormField>
-              <FormField label="APD Topic">
+              <FormField envKey="MQTT_APD_TOPIC" label="APD Topic">
                 <Input value={env.MQTT_APD_TOPIC || ''} onChange={e => setField('MQTT_APD_TOPIC', e.target.value)} />
               </FormField>
-              <FormField label="Fire/Smoke Topic">
+              <FormField envKey="MQTT_FIRESMOKE_TOPIC" label="Fire/Smoke Topic">
                 <Input value={env.MQTT_FIRESMOKE_TOPIC || ''} onChange={e => setField('MQTT_FIRESMOKE_TOPIC', e.target.value)} />
               </FormField>
-              <FormField label="Face Topic">
+              <FormField envKey="MQTT_FACE_TOPIC" label="Face Topic">
                 <Input value={env.MQTT_FACE_TOPIC || ''} onChange={e => setField('MQTT_FACE_TOPIC', e.target.value)} />
               </FormField>
             </div>
@@ -466,10 +480,10 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                   </p>
                 )}
               </FormField>
-              <FormField label="FPS Limit (0 = unlimited)">
+              <FormField envKey="FPS_LIMIT" label="FPS Limit (0 = unlimited)">
                 <Input type="number" value={env.FPS_LIMIT || '0'} onChange={e => setField('FPS_LIMIT', e.target.value)} />
               </FormField>
-              <FormField label="Frame Skip">
+              <FormField envKey="FRAME_SKIP" label="Frame Skip">
                 <Input type="number" value={env.FRAME_SKIP || '2'} onChange={e => setField('FRAME_SKIP', e.target.value)} />
               </FormField>
             </div>
@@ -492,7 +506,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
 
           <Section title="Detection Model (Triton)">
             <div className="grid grid-cols-2 gap-4">
-              <FormField label="Triton Model">
+              <FormField envKey="TRITON_MODEL" label="Triton Model">
                 <ModelSelect
                   value={env.TRITON_MODEL || ''}
                   onChange={v => setField('TRITON_MODEL', v)}
@@ -501,10 +515,10 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                   kind="detection"
                 />
               </FormField>
-              <FormField label="Confidence (0.0–1.0)">
+              <FormField envKey="YOLO_CONFIDENCE" label="Confidence (0.0–1.0)">
                 <Input type="number" step="0.05" min="0" max="1" value={env.YOLO_CONFIDENCE || '0.3'} onChange={e => setField('YOLO_CONFIDENCE', e.target.value)} />
               </FormField>
-              <FormField label="Outbound JPEG Quality (1–100)">
+              <FormField envKey="JPEG_QUALITY" label="Outbound JPEG Quality (1–100)">
                 <Input type="number" min="1" max="100" value={env.JPEG_QUALITY || '40'} onChange={e => setField('JPEG_QUALITY', e.target.value)} />
               </FormField>
               <FormField label="Annotated Stream (Bounding Box)">
@@ -542,10 +556,10 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         kind="detection"
                       />
                     </FormField>
-                    <FormField label="Confidence (0.0–1.0)">
+                    <FormField envKey="APD_CONFIDENCE" label="Confidence (0.0–1.0)">
                       <Input type="number" step="0.05" min="0" max="1" value={env.APD_CONFIDENCE || '0.3'} onChange={e => setField('APD_CONFIDENCE', e.target.value)} />
                     </FormField>
-                    <FormField label="Tag">
+                    <FormField envKey="APD_TAG" label="Tag">
                       <TagSelect value={env.APD_TAG || 'alarm'} onChange={v => setField('APD_TAG', v)} />
                     </FormField>
                     <FormField label="Violation Classes" className="col-span-2">
@@ -599,16 +613,16 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         kind="detection"
                       />
                     </FormField>
-                    <FormField label="Confidence (0.0–1.0)">
+                    <FormField envKey="FIRE_SMOKE_CONFIDENCE" label="Confidence (0.0–1.0)">
                       <Input type="number" step="0.05" min="0" max="1" value={env.FIRE_SMOKE_CONFIDENCE || '0.3'} onChange={e => setField('FIRE_SMOKE_CONFIDENCE', e.target.value)} />
                     </FormField>
-                    <FormField label="Fire Tag">
+                    <FormField envKey="FIRE_TAG" label="Fire Tag">
                       <TagSelect value={env.FIRE_TAG || 'alarm'} onChange={v => setField('FIRE_TAG', v)} />
                     </FormField>
-                    <FormField label="Smoke Tag">
+                    <FormField envKey="SMOKE_TAG" label="Smoke Tag">
                       <TagSelect value={env.SMOKE_TAG || 'alarm'} onChange={v => setField('SMOKE_TAG', v)} />
                     </FormField>
-                    <FormField label="Cooldown (minutes)">
+                    <FormField envKey="FIRE_SMOKE_COOLDOWN_MINUTES" label="Cooldown (minutes)">
                       <Input type="number" min="1" value={env.FIRE_SMOKE_COOLDOWN_MINUTES || '5'} onChange={e => setField('FIRE_SMOKE_COOLDOWN_MINUTES', e.target.value)} />
                     </FormField>
                   </div>
@@ -634,7 +648,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         kind="detection"
                       />
                     </FormField>
-                    <FormField label="Face Embedding Model">
+                    <FormField envKey="FACE_EMBED_MODEL" label="Face Embedding Model">
                       <ModelSelect
                         value={env.FACE_EMBED_MODEL || ''}
                         onChange={v => setField('FACE_EMBED_MODEL', v)}
@@ -643,22 +657,22 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
                         kind="embedding"
                       />
                     </FormField>
-                    <FormField label="Confidence (0.0–1.0)">
+                    <FormField envKey="FACE_CONFIDENCE" label="Confidence (0.0–1.0)">
                       <Input type="number" step="0.05" min="0" max="1" value={env.FACE_CONFIDENCE || '0.5'} onChange={e => setField('FACE_CONFIDENCE', e.target.value)} />
                     </FormField>
-                    <FormField label="Match Threshold (0.0–1.0)">
+                    <FormField envKey="FACE_MATCH_THRESHOLD" label="Match Threshold (0.0–1.0)">
                       <Input type="number" step="0.05" min="0" max="1" value={env.FACE_MATCH_THRESHOLD || '0.5'} onChange={e => setField('FACE_MATCH_THRESHOLD', e.target.value)} />
                     </FormField>
-                    <FormField label="Insider Tag">
+                    <FormField envKey="INSIDER_TAG" label="Insider Tag">
                       <TagSelect value={env.INSIDER_TAG || 'info'} onChange={v => setField('INSIDER_TAG', v)} />
                     </FormField>
-                    <FormField label="Intruder Tag">
+                    <FormField envKey="INTRUDER_TAG" label="Intruder Tag">
                       <TagSelect value={env.INTRUDER_TAG || 'alarm'} onChange={v => setField('INTRUDER_TAG', v)} />
                     </FormField>
-                    <FormField label="Cache Refresh (minutes)">
+                    <FormField envKey="FACE_CACHE_REFRESH_MINUTES" label="Cache Refresh (minutes)">
                       <Input type="number" min="1" value={env.FACE_CACHE_REFRESH_MINUTES || '10'} onChange={e => setField('FACE_CACHE_REFRESH_MINUTES', e.target.value)} />
                     </FormField>
-                    <FormField label="Best-Shot Frames">
+                    <FormField envKey="FACE_CAPTURE_FRAMES" label="Best-Shot Frames">
                       <Input type="number" min="1" value={env.FACE_CAPTURE_FRAMES || '5'} onChange={e => setField('FACE_CAPTURE_FRAMES', e.target.value)} />
                       <p className="text-xs text-muted-foreground">
                         Sightings buffered per person before embedding the sharpest/best-angled one. Higher = more accurate, slower verdict.
@@ -915,7 +929,126 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ code: s
           </Section>
         </TabsContent>
         )}
+
+        {isDetection && (
+        <TabsContent value="history" className="pt-4">
+          {activeTab === 'history' && (
+            <HistoryPanel
+              code={code}
+              onRestored={(newCode) => {
+                if (newCode !== code) router.replace(`${devicesBase}/${newCode}?tab=history`);
+                else fetchDevice();
+              }}
+            />
+          )}
+        </TabsContent>
+        )}
       </Tabs>
+    </div>
+    </InheritedCtx.Provider>
+  );
+}
+
+interface HistoryEntry {
+  id: number;
+  config_version: number;
+  code: string;
+  name: string;
+  overrides: Record<string, string>;
+  reason: string;
+  changed_at: string;
+  changed_by: string | null;
+}
+
+/** What changed between two override snapshots, for one history row. */
+function describeChange(entry: HistoryEntry, older: HistoryEntry | undefined): string[] {
+  if (!older) return ['Created'];
+  const out: string[] = [];
+  if (entry.code !== older.code) out.push(`code ${older.code} → ${entry.code}`);
+  if (entry.name !== older.name) out.push(`name “${older.name}” → “${entry.name}”`);
+  const keys = new Set([...Object.keys(entry.overrides), ...Object.keys(older.overrides)]);
+  for (const k of [...keys].sort()) {
+    const a = older.overrides[k];
+    const b = entry.overrides[k];
+    if (a === b) continue;
+    const show = (v: string | undefined) => v === undefined ? 'global' : /PASS|RTSP|URL/.test(k) ? '•••' : (v.length > 32 ? v.slice(0, 32) + '…' : v || '(empty)');
+    out.push(`${k}: ${show(a)} → ${show(b)}`);
+  }
+  return out.length ? out : ['No change in overrides'];
+}
+
+function HistoryPanel({ code, onRestored }: { code: string; onRestored: (newCode: string) => void }) {
+  const [data, setData] = useState<{ currentVersion: number; history: HistoryEntry[] } | null>(null);
+  const [confirm, setConfirm] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/devices/${code}/history`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setData(d); })
+      .catch(() => toast.error('Failed to load history'));
+    return () => { cancelled = true; };
+  }, [code]);
+
+  async function restore(entry: HistoryEntry) {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/devices/${code}/rollback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ historyId: entry.id }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      toast.success(`Restored v${entry.config_version} as v${d.configVersion}`);
+      onRestored(d.deviceCode);
+    } catch (e) {
+      toast.error(`Restore failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+  }
+
+  if (!data) return <p className="text-sm text-muted-foreground">Loading...</p>;
+  if (!data.history.length) return <p className="text-sm text-muted-foreground">No history yet.</p>;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Every saved change to this camera. Restoring brings back that version&apos;s code, name and custom values as a new version;
+        values that follow Settings keep following them.
+      </p>
+      <div className="rounded-md border border-border divide-y divide-border">
+        {data.history.map((h, i) => {
+          const current = h.config_version === data.currentVersion && i === 0;
+          return (
+            <div key={h.id} className="p-3 flex items-start gap-3">
+              <span className="font-mono text-xs rounded bg-muted px-1.5 py-0.5 shrink-0 tabular-nums">v{h.config_version}</span>
+              <div className="flex-1 min-w-0 space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  {new Date(h.changed_at).toLocaleString()} · {h.reason}{h.changed_by ? ` · ${h.changed_by}` : ''}
+                  {current && <span className="ml-2 text-emerald-600 dark:text-emerald-400">current</span>}
+                </p>
+                <ul className="text-xs font-mono space-y-0.5">
+                  {describeChange(h, data.history[i + 1]).map((c, j) => <li key={j} className="truncate">{c}</li>)}
+                </ul>
+              </div>
+              {!current && (
+                confirm === h.id ? (
+                  <span className="inline-flex gap-1 shrink-0">
+                    <Button size="sm" onClick={() => restore(h)} disabled={busy}>{busy ? 'Restoring...' : 'Restore'}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
+                  </span>
+                ) : (
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => setConfirm(h.id)}>Restore…</Button>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -929,10 +1062,34 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function FormField({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
+// Values the device would have without its own overrides (from Settings), so a
+// field can show whether it follows the global value or is customised here.
+const InheritedCtx = createContext<{ inherited: Record<string, string> | null; env: Partial<DeviceEnvConfig>; setField: (k: string, v: string) => void } | null>(null);
+
+function InheritChip({ envKey }: { envKey: string }) {
+  const ctx = useContext(InheritedCtx);
+  if (!ctx?.inherited || ctx.inherited[envKey] === undefined) return null;
+  const inherited = ctx.inherited[envKey];
+  if ((ctx.env[envKey] ?? '') === inherited) {
+    return <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 bg-muted text-muted-foreground" title="Follows Settings; changes there apply here">global</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 bg-sky-500/15 text-sky-600 dark:text-sky-400" title={`Global value: ${inherited || '(empty)'}`}>custom</span>
+      <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => ctx.setField(envKey, inherited)}>
+        reset
+      </button>
+    </span>
+  );
+}
+
+function FormField({ label, hint, children, className, envKey }: { label: string; hint?: string; children: React.ReactNode; className?: string; envKey?: string }) {
   return (
     <div className={`space-y-1.5 ${className || ''}`}>
-      <Label>{label}</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label>{label}</Label>
+        {envKey && <InheritChip envKey={envKey} />}
+      </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {children}
     </div>

@@ -9,12 +9,12 @@
 // /nodered is handled in server.js before Next sees the request.
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE, verifyToken } from './lib/auth-token';
-import { sessionUser, USER_HEADERS, type SessionUser } from './lib/auth';
+import { sessionUser, sessionCache, USER_HEADERS, type SessionUser } from './lib/auth';
 import { canAccess, isPublicPath, USER_HOME } from './lib/permissions';
 import { describeDbError } from './lib/db';
 
 const CACHE_MS = 30_000;
-const cache = new Map<string, { user: SessionUser | null; until: number }>();
+const cache = sessionCache;   // shared with logout / user changes (lib/auth.ts)
 
 async function resolveUser(cookie: string | undefined): Promise<SessionUser | null> {
   if (!cookie || !verifyToken(cookie)) return null;

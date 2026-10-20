@@ -33,10 +33,10 @@ _conn = None
 def current_state():
     if state.restart_requested:
         return 'stopping'
-    if state.hb_fps is None:
-        return 'starting'
     if state.triton_ok is False:
-        return 'degraded'
+        return 'degraded'          # camera fine, inference unavailable
+    if state.hb_fps is None:
+        return 'error' if state.last_error else 'starting'
     return 'running'
 
 
