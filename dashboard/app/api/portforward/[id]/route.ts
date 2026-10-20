@@ -7,9 +7,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   try {
     const input = (await request.json()) as PortForwardInput;
-    const problem = validateForward(input, id);
+    const problem = await validateForward(input, id);
     if (problem) return NextResponse.json({ error: problem }, { status: 400 });
-    const forward = updateForward(id, input);
+    const forward = await updateForward(id, input);
     if (!forward) return NextResponse.json({ error: 'Forward not found' }, { status: 404 });
     const deploy = await deployPortForwardConfig();
     return NextResponse.json({ forward, deploy });
@@ -21,7 +21,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    if (!deleteForward(id)) return NextResponse.json({ error: 'Forward not found' }, { status: 404 });
+    if (!(await deleteForward(id))) return NextResponse.json({ error: 'Forward not found' }, { status: 404 });
     const deploy = await deployPortForwardConfig();
     return NextResponse.json({ success: true, deploy });
   } catch (e) {

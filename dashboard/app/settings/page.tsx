@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { ModelSelect } from '@/components/ModelSelect';
 import { TagSelect } from '@/components/TagSelect';
 import { toast } from 'sonner';
@@ -31,9 +30,6 @@ export default function SettingsPage() {
       .catch(() => { /* Triton model list unavailable — keep free-text fallback */ });
   }, []);
 
-  function setPg(key: keyof GlobalSettings['pg'], value: string) {
-    setSettings(prev => ({ ...prev, pg: { ...prev.pg, [key]: value } }));
-  }
   function setMqtt(key: keyof GlobalSettings['mqtt'], value: string) {
     setSettings(prev => ({ ...prev, mqtt: { ...prev.mqtt, [key]: value } }));
   }
@@ -60,7 +56,8 @@ export default function SettingsPage() {
       if (data.engineRebuildRecommended) {
         toast.warning('Hardware mode / Triton image changed — rebuild TensorRT engines and restart Triton from the dashboard.');
       }
-      toast.success('Settings saved. New cameras will use these defaults.');
+      const n = (data.devicesUpdated ?? []).length;
+      toast.success(n ? `Settings saved and applied to ${n} camera${n > 1 ? 's' : ''}.` : 'Settings saved.');
     } catch (e) {
       toast.error(`Failed to save: ${e}`);
     } finally {
@@ -184,24 +181,12 @@ export default function SettingsPage() {
       )}
 
       {isDetection && (
-      <Section title="PostgreSQL Database">
-        <div className="grid grid-cols-2 gap-4">
-          <FormField label="Host">
-            <Input value={settings.pg.host} onChange={e => setPg('host', e.target.value)} placeholder="host.docker.internal" />
-          </FormField>
-          <FormField label="Port">
-            <Input type="number" value={settings.pg.port} onChange={e => setPg('port', e.target.value)} placeholder="5432" />
-          </FormField>
-          <FormField label="Database">
-            <Input value={settings.pg.db} onChange={e => setPg('db', e.target.value)} placeholder="postgres" />
-          </FormField>
-          <FormField label="User">
-            <Input value={settings.pg.user} onChange={e => setPg('user', e.target.value)} placeholder="postgres" />
-          </FormField>
-          <FormField label="Password" className="col-span-2">
-            <Input type="password" value={settings.pg.pass} onChange={e => setPg('pass', e.target.value)} />
-          </FormField>
-        </div>
+      <Section title="Database">
+        <p className="text-sm text-muted-foreground">
+          Cameras, settings and results are stored in the PostgreSQL database <span className="font-mono">edge</span>.
+          The connection is configured in <span className="font-mono">dashboard/.env</span> (EDGE_DB_*) by setup/install.sh,
+          not here.
+        </p>
       </Section>
       )}
 
@@ -262,17 +247,6 @@ export default function SettingsPage() {
           <FormField label="Daily Send Time">
             <Input value={settings.defaults.daily_send_time} onChange={e => setDefault('daily_send_time', e.target.value)} placeholder="23:59" />
           </FormField>
-          <FormField label="Debug Mode">
-            <div className="flex items-center gap-2 pt-2">
-              <Switch
-                checked={settings.defaults.debug_mode === 'true'}
-                onCheckedChange={v => setDefault('debug_mode', v ? 'true' : 'false')}
-              />
-              <span className="text-sm text-muted-foreground">
-                {settings.defaults.debug_mode === 'true' ? 'ON (display enabled, no MQTT/DB)' : 'OFF (production mode)'}
-              </span>
-            </div>
-          </FormField>
         </div>
       </Section>
       )}
@@ -280,8 +254,9 @@ export default function SettingsPage() {
       {isDetection && (
       <Section title="Additional Detection Defaults">
         <p className="text-xs text-muted-foreground -mt-2">
-          Applied when a new camera is created. APD and Fire/Smoke are disabled
-          by default — enable them per camera once a model is selected.
+          Every camera inherits these unless it overrides the value on its own page.
+          Changes apply to running cameras within seconds. APD and Fire/Smoke stay
+          disabled until enabled per camera.
         </p>
         <div className="grid grid-cols-2 gap-4">
           <FormField label="People Counting Tag">

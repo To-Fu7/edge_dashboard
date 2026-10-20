@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { readDeviceEnv } from '@/lib/env-parser';
+import { requireDevice } from '@/lib/devices';
+import { apiError } from '@/lib/device-api';
 import { captureFrame } from '@/lib/capture';
 
 export async function GET(
@@ -8,8 +9,13 @@ export async function GET(
 ) {
   const { code } = await params;
 
-  const env = readDeviceEnv(code);
-  if (!env?.RTSP_URL) {
+  let env: Record<string, string>;
+  try {
+    env = (await requireDevice(code)).effective_env;
+  } catch (e) {
+    return apiError(e);
+  }
+  if (!env.RTSP_URL) {
     return NextResponse.json({ error: 'RTSP_URL not configured for this device' }, { status: 400 });
   }
 

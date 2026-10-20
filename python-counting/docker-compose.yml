@@ -1,37 +1,55 @@
-# Camera services are generated per-device by the dashboard (lib/compose.ts).
-# This file ships only the shared inference stack.
+# Triton Inference Server + one-shot TensorRT engine builder.
+#
+# Static and tracked in git. Per-machine values come from python-counting/.env
+# (not in git), written by the dashboard (Settings → Hardware Mode / Triton) and
+# by setup/install.sh:
+#   TRITON_IMAGE             nvcr.io/nvidia/tritonserver:<tag>-py3 (-py3-igpu on Jetson)
+#   TRITON_RUNTIME           nvidia | runc (cpu mode)
+#   TRT_BACKEND              trt | onnx (cpu mode: keep onnxruntime configs)
+#   HOST_PYTHON_COUNTING_DIR absolute host path of this folder (needed when the
+#                            dashboard container runs compose through the host's dockerd)
+#
+# Camera containers (device-<code>) are created by the dashboard through the
+# Docker API, not by this file.
 services:
   triton:
-    image: nvcr.io/nvidia/tritonserver:24.08-py3
+    image: ${TRITON_IMAGE:-nvcr.io/nvidia/tritonserver:24.08-py3}
     container_name: triton-inference-server
     restart: unless-stopped
+    # --exit-on-error=false / --strict-readiness=false: one optional model that
+    # can't load (e.g. arcface_112 without its ONNX) must neither stop Triton nor
+    # make the whole server report not-ready to every camera.
     command: tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false --strict-readiness=false
-    runtime: nvidia
+    runtime: ${TRITON_RUNTIME:-nvidia}
     shm_size: 1gb
     ports:
       - "8000:8000"   # HTTP
       - "8001:8001"   # gRPC
       - "8002:8002"   # Prometheus metrics
     volumes:
-      - ./models:/models
+      - ${HOST_PYTHON_COUNTING_DIR:-.}/models:/models
     networks:
       - envisions
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+
   triton-model-builder:
-    image: nvcr.io/nvidia/tritonserver:24.08-py3
+    image: ${TRITON_IMAGE:-nvcr.io/nvidia/tritonserver:24.08-py3}
     container_name: triton-model-builder
     profiles: ["build"]
-    runtime: nvidia
+    runtime: ${TRITON_RUNTIME:-nvidia}
     entrypoint: ["/bin/bash", "/tools/build_engine.sh"]
     volumes:
-      - ./models:/models
-      - ./tools:/tools:ro
+      - ${HOST_PYTHON_COUNTING_DIR:-.}/models:/models
+      - ${HOST_PYTHON_COUNTING_DIR:-.}/tools:/tools:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - TRT_BACKEND=${TRT_BACKEND:-trt}
+      - QUEUE_DELAY_US=${QUEUE_DELAY_US:-1000}
+
 networks:
   envisions:
     driver: bridge
-    name: envisions  # shared with the dashboard compose — without this, compose prefixes the project name and containers land on an isolated network
+    name: envisions  # shared with the dashboard compose project

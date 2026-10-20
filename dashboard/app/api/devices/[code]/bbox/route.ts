@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { readDeviceEnv } from '@/lib/env-parser';
+import { getDevice } from '@/lib/devices';
 
 const PYTHON_COUNTING_DIR = process.env.PYTHON_COUNTING_DIR || path.join(process.cwd(), '..', 'python-counting');
 const STALE_MS = 5000;
@@ -13,8 +13,8 @@ export async function GET(
   { params }: { params: Promise<{ code: string }> }
 ) {
   const { code } = await params;
-  const env = readDeviceEnv(code);
-  const deviceCode = env?.DEVICE_CODE || code;
+  const device = await getDevice(code).catch(() => null);
+  const deviceCode = device?.code || code;
 
   const bboxPath = path.join(PYTHON_COUNTING_DIR, `bbox_${deviceCode}.json`);
 

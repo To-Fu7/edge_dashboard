@@ -1,4 +1,4 @@
-import { PYTHON_COUNTING_DIR, COMPOSE_FILE, TRITON_BUILDER_SERVICE_NAME, checkHostMountConfig, syncTritonServices } from '@/lib/compose';
+import { PYTHON_COUNTING_DIR, COMPOSE_FILE, TRITON_BUILDER_SERVICE_NAME, checkHostMountConfig, syncTritonEnv } from '@/lib/compose';
 import { streamSteps, streamResponse } from '@/lib/buildStream';
 
 export const dynamic = 'force-dynamic';
@@ -10,12 +10,9 @@ export async function POST(request: Request) {
   const mountError = checkHostMountConfig();
   if (mountError) return new Response(`error: ${mountError}`, { status: 400 });
 
-  // Rewrite the triton-model-builder compose entry with the current
-  // HOST_PYTHON_COUNTING_DIR before running it — the checked-in
-  // docker-compose.yml ships relative "./tools" mounts that only resolve
-  // correctly inside this container's own filesystem, not on the HOST
-  // dockerd actually running the sibling container.
-  syncTritonServices();
+  // python-counting/.env carries the Triton image/runtime for this hardware
+  // mode and the host path the builder's bind mounts need.
+  await syncTritonEnv();
 
   let force = false;
   try {

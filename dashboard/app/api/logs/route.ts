@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getContainerLogs } from '@/lib/docker';
-import { listServices, getContainerName } from '@/lib/compose';
+import { listDevices } from '@/lib/devices';
+import { containerNameFor } from '@/lib/device-config';
+import { apiError } from '@/lib/device-api';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -9,29 +11,27 @@ export async function GET(request: Request) {
   const since = url.searchParams.get('since');
 
   try {
-    const services = listServices();
-    const targets = containerCode
-      ? services.filter(s => s.deviceCode === containerCode)
-      : services;
+    const devices = await listDevices();
+    const targets = containerCode ? devices.filter(d => d.code === containerCode) : devices;
 
     const allLogs: { containerCode: string; containerName: string; line: string }[] = [];
 
     await Promise.all(
-      targets.map(async s => {
-        const containerName = getContainerName(s.deviceCode);
+      targets.map(async d => {
+        const containerName = containerNameFor(d.code);
         const logs = await getContainerLogs(
           containerName,
           tail,
           since ? parseInt(since, 10) : undefined
         );
         for (const line of logs) {
-          allLogs.push({ containerCode: s.deviceCode, containerName, line });
+          allLogs.push({ containerCode: d.code, containerName, line });
         }
       })
     );
 
     return NextResponse.json({ logs: allLogs });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

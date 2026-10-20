@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
-import { composeStop } from '@/lib/compose';
+import { requireDevice, setDeviceEnabled } from '@/lib/devices';
+import { stopDevice } from '@/lib/device-runtime';
+import { apiError } from '@/lib/device-api';
 
-export async function POST(
-  _req: Request,
-  { params }: { params: Promise<{ code: string }> }
-) {
-  const { code } = await params;
+export async function POST(_req: Request, { params }: { params: Promise<{ code: string }> }) {
   try {
-    await composeStop(code);
+    const device = await requireDevice((await params).code);
+    await stopDevice(device);
+    await setDeviceEnabled(device.id, false);   // stays stopped across dashboard restarts
     return NextResponse.json({ success: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

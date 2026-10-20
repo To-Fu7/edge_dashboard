@@ -1,159 +1,45 @@
 import { NextResponse } from 'next/server';
-import { listServices, addService, serviceExists } from '@/lib/compose';
-import { readDeviceEnv, writeDeviceEnv, listEnvFiles } from '@/lib/env-parser';
-import { getAllContainerStatuses } from '@/lib/docker';
-import { getContainerName } from '@/lib/compose';
-import { readSettings } from '@/lib/settings';
-import { upsertCameraStream } from '@/lib/stream-gateway';
-import { v4 as uuidv4 } from 'uuid';
+import { listDevices, createDevice } from '@/lib/devices';
+import { deviceContainerStatuses, ensureContainer } from '@/lib/device-runtime';
+import { apiError, deviceSummary, syncStreamRegistration } from '@/lib/device-api';
+import { isAdmin, requestUser } from '@/lib/auth';
 
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
   try {
-    const services = listServices();
-    const containerNames = services.map(s => getContainerName(s.deviceCode));
-    const statuses = await getAllContainerStatuses(containerNames);
-
-    const devices = services.map(s => {
-      const env = readDeviceEnv(s.deviceCode);
-      const containerName = getContainerName(s.deviceCode);
-      return {
-        deviceCode: s.deviceCode,
-        deviceName: env?.DEVICE_NAME || s.deviceCode,
-        deviceId: env?.DEVICE_ID || '',
-        serviceName: s.serviceName,
-        containerName,
-        envFile: s.envFile,
-        rtspUrl: env?.RTSP_URL || '',
-        status: statuses[containerName] || 'unknown',
-      };
-    });
-
-    // Also include env files not in compose (orphaned)
-    const envCodes = listEnvFiles();
-    const serviceCodes = new Set(services.map(s => s.deviceCode));
-    for (const code of envCodes) {
-      if (!serviceCodes.has(code)) {
-        const env = readDeviceEnv(code);
-        const containerName = getContainerName(code);
-        devices.push({
-          deviceCode: code,
-          deviceName: env?.DEVICE_NAME || code,
-          deviceId: env?.DEVICE_ID || '',
-          serviceName: '',
-          containerName,
-          envFile: `.env_${code}`,
-          rtspUrl: env?.RTSP_URL || '',
-          status: 'not_found',
-        });
-      }
-    }
-
-    return NextResponse.json({ devices });
+    const admin = isAdmin(request);
+    const [devices, containers] = await Promise.all([
+      listDevices(),
+      deviceContainerStatuses().catch(() => new Map()),
+    ]);
+    return NextResponse.json({ devices: devices.map(d => deviceSummary(d, containers.get(d.id), admin)) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { deviceCode, deviceName, rtspUrl, deviceId: requestedDeviceId } = body;
+    const device = await createDevice({
+      code: String(body.deviceCode ?? ''),
+      name: String(body.deviceName ?? ''),
+      id: body.deviceId ? String(body.deviceId) : undefined,
+      env: body.rtspUrl ? { RTSP_URL: String(body.rtspUrl) } : {},
+    }, requestUser(request)?.id ?? null);
 
-    if (!deviceCode || !deviceName) {
-      return NextResponse.json({ error: 'deviceCode and deviceName are required' }, { status: 400 });
+    syncStreamRegistration(device);
+    // Create (not start) the container now so problems like a missing image
+    // show up immediately; the device is saved either way.
+    let containerWarning: string | undefined;
+    try {
+      await ensureContainer(device);
+    } catch (e) {
+      containerWarning = (e as Error).message;
     }
-
-    if (/\s/.test(deviceCode)) {
-      return NextResponse.json({ error: 'deviceCode must not contain spaces' }, { status: 400 });
-    }
-
-    if (serviceExists(deviceCode)) {
-      return NextResponse.json({ error: 'Device with this code already exists' }, { status: 409 });
-    }
-
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (requestedDeviceId) {
-      if (!UUID_RE.test(requestedDeviceId)) {
-        return NextResponse.json({ error: 'deviceId must be a valid UUID' }, { status: 400 });
-      }
-      // Two devices sharing a DEVICE_ID would mix their DB rows (person_inout,
-      // *_hourly are all keyed by device_id) — reject before that can happen.
-      const collision = listEnvFiles().find(code => readDeviceEnv(code)?.DEVICE_ID === requestedDeviceId);
-      if (collision) {
-        return NextResponse.json({ error: `deviceId is already used by device "${collision}"` }, { status: 409 });
-      }
-    }
-
-    const settings = readSettings();
-    const deviceId = requestedDeviceId || uuidv4();
-
-    writeDeviceEnv(deviceCode, {
-      DEVICE_ID: deviceId,
-      DEVICE_NAME: deviceName,
-      DEVICE_CODE: deviceCode,
-      PG_HOST: settings.pg.host,
-      PG_PORT: settings.pg.port,
-      PG_DB: settings.pg.db,
-      PG_USER: settings.pg.user,
-      PG_PASS: settings.pg.pass,
-      MQTT_BROKER: settings.mqtt.broker,
-      MQTT_PORT: settings.mqtt.port,
-      MQTT_USERNAME: settings.mqtt.username,
-      MQTT_PASSWORD: settings.mqtt.password,
-      MQTT_TOPIC: settings.mqtt.activityTopicTemplate.replace(/\{code\}/g, deviceCode),
-      MQTT_INTERVAL_TOPIC: settings.mqtt.intervalTopicTemplate.replace(/\{code\}/g, deviceCode),
-      MQTT_INTERVAL_MINUTES: settings.defaults.mqtt_interval_minutes,
-      DAILY_SEND_TIME: settings.defaults.daily_send_time,
-      RTSP_URL: rtspUrl || '',
-      DEBUG_MODE: settings.defaults.debug_mode,
-      SCREEN_RESOLUTION: '[800, 600]',
-      TRITON_MODEL: settings.triton.defaultModel,
-      YOLO_CONFIDENCE: settings.defaults.yolo_confidence,
-      ANNOTATED_STREAM: 'false',
-      JPEG_QUALITY: settings.defaults.jpeg_quality,
-      FPS_LIMIT: settings.defaults.fps_limit,
-      FRAME_SKIP: settings.defaults.frame_skip,
-      PEOPLE_COUNTING_TAG: settings.defaults.people_counting_tag,
-      APD_ENABLED: 'false',
-      APD_CONFIDENCE: settings.defaults.apd_confidence,
-      APD_TAG: settings.defaults.apd_tag,
-      FIRE_SMOKE_ENABLED: 'false',
-      FIRE_SMOKE_CONFIDENCE: settings.defaults.fire_smoke_confidence,
-      FIRE_TAG: settings.defaults.fire_tag,
-      SMOKE_TAG: settings.defaults.smoke_tag,
-      FIRE_SMOKE_COOLDOWN_MINUTES: settings.defaults.fire_smoke_cooldown_minutes,
-      FACE_ENABLED: 'false',
-      FACE_CONFIDENCE: settings.defaults.face_confidence,
-      FACE_MATCH_THRESHOLD: settings.defaults.face_match_threshold,
-      INSIDER_TAG: settings.defaults.insider_tag,
-      INTRUDER_TAG: settings.defaults.intruder_tag,
-      FACE_CACHE_REFRESH_MINUTES: settings.defaults.face_cache_refresh_minutes,
-      FACE_CAPTURE_FRAMES: settings.defaults.face_capture_frames,
-      POINT_AXIS: 'Y',
-      MERGE_GATES: 'false',
-      SWAP_IN_OUT: 'false',
-      DETECTION_STYLE: 'dot',
-      DOT_OFFSET: 'Y',
-      DOT_OFFSET_AMOUNT: '0',
-      LINE_OFFSET: 'Y',
-      LINE_OFFSET_AMOUNT: '5',
-      DETECTION_MODE: 'line_crossing',
-      lineA: '[(100, 300), (700, 300)]',
-    });
-
-    addService(deviceCode, settings.hardwareMode, settings.triton.imageTag);
-
-    // Best-effort: stream-gateway may not be up yet, and a camera can be
-    // added with no RTSP URL set yet — neither should fail device creation.
-    // The device's own Stream tab (Phase 4) can re-trigger this on save.
-    if (rtspUrl) {
-      upsertCameraStream(deviceCode, { rtspUrl, onDemand: true, includeAudio: false }).catch(err => {
-        console.warn(`stream-gateway registration failed for ${deviceCode}:`, err);
-      });
-    }
-
-    return NextResponse.json({ success: true, deviceCode, deviceId }, { status: 201 });
+    return NextResponse.json({ success: true, deviceCode: device.code, deviceId: device.id, containerWarning }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

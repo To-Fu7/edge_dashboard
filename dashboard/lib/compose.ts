@@ -1,28 +1,35 @@
+// Triton + model builder via python-counting/docker-compose.yml.
+//
+// That compose file is static and tracked in git. Everything that differs per
+// machine (Triton image for the hardware mode, GPU runtime, host path) lives in
+// python-counting/.env, which this module writes — so `git pull` never
+// conflicts with runtime state. Camera containers are not in compose at all:
+// see device-runtime.ts.
 import fs from 'fs';
 import path from 'path';
-import yaml from 'js-yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import type { HardwareMode } from './types';
+import type { GlobalSettings, HardwareMode } from './types';
 import { readSettings } from './settings';
 
 const execAsync = promisify(exec);
 
 export const PYTHON_COUNTING_DIR = process.env.PYTHON_COUNTING_DIR || path.join(process.cwd(), '..', 'python-counting');
-// When running inside Docker, PYTHON_COUNTING_DIR is a container-internal path (/python-counting).
-// The Docker daemon needs the actual HOST path to resolve relative volume mounts (.:/app).
-// HOST_PYTHON_COUNTING_DIR must be set to the host filesystem path of python-counting/.
+// Inside Docker, PYTHON_COUNTING_DIR is the container's own mount (/python-counting);
+// the host's dockerd needs the real host path for bind mounts.
 export const HOST_PYTHON_COUNTING_DIR = process.env.HOST_PYTHON_COUNTING_DIR || PYTHON_COUNTING_DIR;
 export const COMPOSE_FILE = path.join(PYTHON_COUNTING_DIR, 'docker-compose.yml');
+const TRITON_ENV_FILE = path.join(PYTHON_COUNTING_DIR, '.env');
 
-/** Sanity-checks the host-mount setup before a build spawns `docker` commands
- *  that bind-mount HOST_PYTHON_COUNTING_DIR into a sibling container (via the
- *  host's Docker daemon, reached through the mounted docker.sock). Docker
- *  silently creates an empty directory for a bind-mount source that doesn't
- *  exist on the host, so a misconfigured/missing HOST_PYTHON_COUNTING_DIR
- *  doesn't fail until the *sibling* container starts — surfacing as a cryptic
- *  "file not found" for a script that IS there, just not on the mounted side.
- *  Returns an actionable error string, or null if the setup looks correct. */
+export const TRITON_SERVICE_NAME = 'triton';
+export const TRITON_BUILDER_SERVICE_NAME = 'triton-model-builder';
+export const TRITON_CONTAINER_NAME = 'triton-inference-server';
+export const DEFAULT_TRITON_IMAGE_TAG = '24.08';
+
+/** Sanity-checks the host-mount setup before a build spawns sibling containers
+ *  that bind-mount HOST_PYTHON_COUNTING_DIR through the host's Docker daemon.
+ *  Docker silently creates an empty directory for a missing bind source, so a
+ *  wrong path only shows up later as "file not found" for files that exist. */
 export function checkHostMountConfig(): string | null {
   if (!fs.existsSync(path.join(PYTHON_COUNTING_DIR, 'tools', 'build_engine.sh'))) {
     return (
@@ -33,112 +40,12 @@ export function checkHostMountConfig(): string | null {
   }
   if (!process.env.HOST_PYTHON_COUNTING_DIR) {
     return (
-      `HOST_PYTHON_COUNTING_DIR is not set. The dashboard container can read its own python-counting/ ` +
-      `files fine, but the commands below run via the HOST's Docker daemon (through the mounted ` +
-      `docker.sock), which needs the HOST filesystem path of python-counting/ to resolve -v mounts for ` +
-      `triton-model-builder / yolo-export. Without it, Docker silently bind-mounts an empty directory ` +
-      `and the build fails with "file not found" for scripts that do exist. ` +
-      `Fix: set HOST_PYTHON_COUNTING_DIR=<absolute host path to python-counting/> in dashboard/.env, ` +
-      `then recreate the dashboard container (docker compose up -d --force-recreate dashboard).`
+      `HOST_PYTHON_COUNTING_DIR is not set, so containers started through the host's Docker daemon ` +
+      `would bind-mount an empty directory. Set HOST_PYTHON_COUNTING_DIR=<absolute host path to ` +
+      `python-counting/> in dashboard/.env, then: docker compose up -d --force-recreate dashboard`
     );
   }
   return null;
-}
-
-interface ComposeService {
-  image?: string;
-  container_name?: string;
-  restart?: string;
-  runtime?: string;
-  command?: string;
-  entrypoint?: string[];
-  profiles?: string[];
-  ports?: string[];
-  depends_on?: string[];
-  env_file?: string[];
-  volumes?: string[];
-  devices?: string[];
-  extra_hosts?: string[];
-  networks?: string[];
-  shm_size?: string;
-  environment?: string[];
-  deploy?: unknown;
-}
-
-export const TRITON_SERVICE_NAME = 'triton';
-export const TRITON_BUILDER_SERVICE_NAME = 'triton-model-builder';
-export const TRITON_CONTAINER_NAME = 'triton-inference-server';
-export const DEFAULT_TRITON_IMAGE_TAG = '24.08';
-
-interface ComposeFile {
-  services: Record<string, ComposeService>;
-  networks?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-// `name: envisions` is required so the network is shared with the dashboard
-// compose project — without it, compose prefixes the project name
-// (python-counting_envisions) and Triton/cameras land on an isolated network.
-const ENVISIONS_NETWORK = { envisions: { driver: 'bridge', name: 'envisions' } };
-
-export function readCompose(): ComposeFile {
-  if (!fs.existsSync(COMPOSE_FILE)) {
-    return {
-      services: {},
-      networks: { ...ENVISIONS_NETWORK },
-    };
-  }
-  const content = fs.readFileSync(COMPOSE_FILE, 'utf-8');
-  return (yaml.load(content) as ComposeFile) || { services: {} };
-}
-
-export function writeCompose(compose: ComposeFile): void {
-  const content = yaml.dump(compose, { lineWidth: 120, quotingType: '"' });
-  fs.writeFileSync(COMPOSE_FILE, content, 'utf-8');
-}
-
-export function getServiceName(deviceCode: string): string {
-  return `services-python-${deviceCode.toLowerCase().replace(/_/g, '-')}`;
-}
-
-export function getContainerName(deviceCode: string): string {
-  return `services-python-${deviceCode.toLowerCase().replace(/_/g, '-')}`;
-}
-
-export function listServices(): { serviceName: string; deviceCode: string; envFile: string }[] {
-  const compose = readCompose();
-  const results: { serviceName: string; deviceCode: string; envFile: string }[] = [];
-
-  for (const [name, svc] of Object.entries(compose.services || {})) {
-    const envFiles = svc.env_file || [];
-    for (const ef of envFiles) {
-      if (ef.startsWith('.env_')) {
-        const code = ef.replace('.env_', '');
-        results.push({ serviceName: name, deviceCode: code, envFile: ef });
-        break;
-      }
-    }
-  }
-
-  return results;
-}
-
-// Camera containers are thin Triton clients since the Triton migration: CPU-only
-// in every hardware mode. GPU access (runtime/devices) now lives on the triton
-// service, which the hardware mode configures instead.
-function buildServiceDefinition(deviceCode: string, _hardwareMode: HardwareMode): ComposeService {
-  const containerName = getContainerName(deviceCode);
-  return {
-    image: 'python-counting-services-python-1:latest',
-    container_name: containerName,
-    restart: 'unless-stopped',
-    env_file: [`.env_${deviceCode}`],
-    extra_hosts: ['host.docker.internal:host-gateway'],
-    networks: ['envisions'],
-    depends_on: [TRITON_SERVICE_NAME],
-    volumes: [`${HOST_PYTHON_COUNTING_DIR}:/app`],
-    environment: [`TRITON_URL=${TRITON_SERVICE_NAME}:8001`],
-  };
 }
 
 export function tritonImageForMode(hardwareMode: HardwareMode, imageTag: string = DEFAULT_TRITON_IMAGE_TAG): string {
@@ -146,246 +53,49 @@ export function tritonImageForMode(hardwareMode: HardwareMode, imageTag: string 
   return `nvcr.io/nvidia/tritonserver:${imageTag}${suffix}`;
 }
 
-export function buildTritonServiceDefinition(
-  hardwareMode: HardwareMode,
-  imageTag: string = DEFAULT_TRITON_IMAGE_TAG
-): ComposeService {
-  const base: ComposeService = {
-    image: tritonImageForMode(hardwareMode, imageTag),
-    container_name: TRITON_CONTAINER_NAME,
-    restart: 'unless-stopped',
-    // --exit-on-error=false: a single model failing to load (e.g. a config.pbtxt
-    // committed ahead of its model.onnx/model.plan — a real, easy-to-hit state in
-    // an incrementally-populated repo) must not take down every OTHER model that
-    // loaded fine. Without this, Triton's default exit-on-any-failure behavior
-    // means one missing weight file kills the whole inference stack.
-    // --strict-readiness=false: same reasoning for /v2/health/ready — with the
-    // default (true) one optional model that can't load (e.g. arcface_112 whose
-    // config.pbtxt is in git but whose ONNX was never added) makes the whole
-    // server report not-ready, so every camera (is_server_ready) and the
-    // dashboard status treat Triton as down. Per-model readiness is still
-    // checked separately (is_model_ready / repository index).
-    command: 'tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false --strict-readiness=false',
-    shm_size: '1gb',
-    ports: ['8000:8000', '8001:8001', '8002:8002'],
-    volumes: [`${HOST_PYTHON_COUNTING_DIR}/models:/models`],
-    networks: ['envisions'],
-  };
-
-  // cpu mode: standard image, onnxruntime-CPU models only — no GPU runtime
-  if (hardwareMode === 'cpu') return base;
-
+export function tritonEnvFor(s: Pick<GlobalSettings, 'hardwareMode' | 'triton'>): Record<string, string> {
   return {
-    ...base,
-    runtime: 'nvidia',
-    environment: [
-      'NVIDIA_VISIBLE_DEVICES=all',
-      'NVIDIA_DRIVER_CAPABILITIES=all',
-    ],
+    TRITON_IMAGE: tritonImageForMode(s.hardwareMode, s.triton.imageTag),
+    TRITON_RUNTIME: s.hardwareMode === 'cpu' ? 'runc' : 'nvidia',
+    TRT_BACKEND: s.hardwareMode === 'cpu' ? 'onnx' : 'trt',
+    HOST_PYTHON_COUNTING_DIR,
   };
 }
 
-export function buildModelBuilderServiceDefinition(
-  hardwareMode: HardwareMode,
-  imageTag: string = DEFAULT_TRITON_IMAGE_TAG
-): ComposeService {
-  const base: ComposeService = {
-    image: tritonImageForMode(hardwareMode, imageTag),
-    container_name: TRITON_BUILDER_SERVICE_NAME,
-    profiles: ['build'],
-    entrypoint: ['/bin/bash', '/tools/build_engine.sh'],
-    volumes: [
-      `${HOST_PYTHON_COUNTING_DIR}/models:/models`,
-      `${HOST_PYTHON_COUNTING_DIR}/tools:/tools:ro`,
-    ],
-  };
-
-  if (hardwareMode === 'cpu') {
-    return { ...base, environment: ['TRT_BACKEND=onnx'] };
-  }
-
-  return {
-    ...base,
-    runtime: 'nvidia',
-    environment: [
-      'NVIDIA_VISIBLE_DEVICES=all',
-      'NVIDIA_DRIVER_CAPABILITIES=all',
-    ],
-  };
+/** Write the per-machine compose values into python-counting/.env, keeping any
+ *  other keys someone added there (e.g. QUEUE_DELAY_US). */
+export function writeTritonEnv(s: Pick<GlobalSettings, 'hardwareMode' | 'triton'>): void {
+  const wanted = tritonEnvFor(s);
+  const lines = fs.existsSync(TRITON_ENV_FILE) ? fs.readFileSync(TRITON_ENV_FILE, 'utf-8').split('\n') : [];
+  const kept = lines.filter(l => l.trim() && !Object.keys(wanted).some(k => l.startsWith(`${k}=`)));
+  const header = '# Written by the Edge dashboard (Settings → Hardware Mode / Triton). Not in git.';
+  const body = [header, ...kept.filter(l => l !== header), ...Object.entries(wanted).map(([k, v]) => `${k}=${v}`)];
+  fs.writeFileSync(TRITON_ENV_FILE, body.join('\n') + '\n', 'utf-8');
 }
 
-function ensureTritonServices(compose: ComposeFile, hardwareMode: HardwareMode, imageTag?: string): void {
-  compose.services = compose.services || {};
-  compose.services[TRITON_SERVICE_NAME] = buildTritonServiceDefinition(hardwareMode, imageTag);
-  compose.services[TRITON_BUILDER_SERVICE_NAME] = buildModelBuilderServiceDefinition(hardwareMode, imageTag);
-  // normalize the network definition on older compose files missing `name:`
-  compose.networks = { ...(compose.networks || {}), ...ENVISIONS_NETWORK };
-}
-
-/** Patches just the volume mounts of the existing triton / triton-model-builder
- *  compose entries to use the resolved HOST_PYTHON_COUNTING_DIR, leaving image/
- *  runtime/environment untouched. A freshly-cloned repo's committed
- *  docker-compose.yml ships relative "./tools"/"./models" mounts — the `docker`
- *  CLI (running inside the dashboard container) resolves those against the
- *  container's own /python-counting path, not the host path the sibling HOST
- *  dockerd actually needs to bind-mount from. Deliberately does NOT regenerate
- *  the whole service (that's ensureTritonServices, used by addService /
- *  applyHardwareModeToAll from Settings) — doing so here would silently swap
- *  the image to whatever hardwareMode defaults to (jetson) if settings.json
- *  doesn't exist yet, which would be wrong on a plain x86/server GPU box that
- *  never touched the hardware-mode picker. If a service is missing entirely,
- *  it's created from current settings as a bootstrap (only path this can hit
- *  is a docker-compose.yml with no triton services at all yet). */
-export function syncTritonServices(): void {
-  const compose = readCompose();
-  compose.services = compose.services || {};
-
-  if (!compose.services[TRITON_SERVICE_NAME] || !compose.services[TRITON_BUILDER_SERVICE_NAME]) {
-    const settings = readSettings();
-    ensureTritonServices(compose, settings.hardwareMode, settings.triton.imageTag);
-  } else {
-    compose.services[TRITON_SERVICE_NAME].volumes = [`${HOST_PYTHON_COUNTING_DIR}/models:/models`];
-    // command is mode-independent (unlike image/runtime), so safe to always
-    // refresh here — an existing compose.yml predating --exit-on-error=false
-    // would otherwise never pick it up short of a full ensureTritonServices()
-    // regen (which this branch deliberately avoids, see the comment above).
-    compose.services[TRITON_SERVICE_NAME].command = buildTritonServiceDefinition('server').command;
-    compose.services[TRITON_BUILDER_SERVICE_NAME].volumes = [
-      `${HOST_PYTHON_COUNTING_DIR}/models:/models`,
-      `${HOST_PYTHON_COUNTING_DIR}/tools:/tools:ro`,
-    ];
-  }
-
-  // Without an explicit `name:`, Compose prefixes the network with the project
-  // name (e.g. "python-counting_envisions"), which never matches the dashboard
-  // compose file's own "envisions" network — the two projects end up on
-  // different bridge networks and can't resolve each other's container names
-  // at all, however correctly everything else is configured.
-  compose.networks = compose.networks || {};
-  compose.networks.envisions = { ...(compose.networks.envisions as object), driver: 'bridge', name: 'envisions' };
-  writeCompose(compose);
-}
-
-// stream-gateway is NOT generated into python-counting's compose any more — it's
-// a dashboard-owned service declared in dashboard/docker-compose.yml (same
-// pattern as edge-portfwd-nginx), built from ../stream-gateway alongside the
-// dashboard. Two compose projects both claiming container_name "stream-gateway"
-// would collide, so this file must not define it.
-
-export function addService(
-  deviceCode: string,
-  hardwareMode: HardwareMode = 'jetson',
-  tritonImageTag?: string
-): void {
-  const compose = readCompose();
-  const serviceName = getServiceName(deviceCode);
-
-  compose.services = compose.services || {};
-  compose.services[serviceName] = buildServiceDefinition(deviceCode, hardwareMode);
-  ensureTritonServices(compose, hardwareMode, tritonImageTag);
-
-  compose.networks = { ...(compose.networks || {}), ...ENVISIONS_NETWORK };
-
-  writeCompose(compose);
-}
-
-export function applyHardwareModeToAll(
-  hardwareMode: HardwareMode,
-  tritonImageTag?: string
-): void {
-  const compose = readCompose();
-  if (!compose.services) return;
-
-  for (const [serviceName, svc] of Object.entries(compose.services)) {
-    const envFiles = svc.env_file || [];
-    const envFile = envFiles.find(ef => ef.startsWith('.env_'));
-    if (!envFile) continue;
-    const deviceCode = envFile.replace('.env_', '');
-    compose.services[serviceName] = buildServiceDefinition(deviceCode, hardwareMode);
-  }
-  ensureTritonServices(compose, hardwareMode, tritonImageTag);
-
-  compose.networks = { ...(compose.networks || {}), ...ENVISIONS_NETWORK };
-
-  writeCompose(compose);
-}
-
-export function removeService(deviceCode: string): void {
-  const compose = readCompose();
-  const serviceName = getServiceName(deviceCode);
-
-  if (compose.services) {
-    delete compose.services[serviceName];
-  }
-
-  writeCompose(compose);
-}
-
-export function serviceExists(deviceCode: string): boolean {
-  const compose = readCompose();
-  const serviceName = getServiceName(deviceCode);
-  return !!compose.services?.[serviceName];
+export async function syncTritonEnv(): Promise<void> {
+  writeTritonEnv(await readSettings());
 }
 
 const COMPOSE_CMD = `docker compose -f "${COMPOSE_FILE}"`;
 
-export async function composeUp(deviceCode: string): Promise<void> {
-  const serviceName = getServiceName(deviceCode);
-  const { stderr } = await execAsync(
-    `${COMPOSE_CMD} up -d --force-recreate --no-deps ${serviceName}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 60000 }
-  );
-  if (stderr && !/pulling|creating|starting|created|started/i.test(stderr)) {
-    if (/error/i.test(stderr)) throw new Error(stderr.trim());
-  }
-}
-
-export async function composeStop(deviceCode: string): Promise<void> {
-  const serviceName = getServiceName(deviceCode);
-  await execAsync(
-    `${COMPOSE_CMD} stop ${serviceName}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 30000 }
-  );
-}
-
-export async function composeRestart(deviceCode: string): Promise<void> {
-  const serviceName = getServiceName(deviceCode);
-  await execAsync(
-    `${COMPOSE_CMD} stop ${serviceName}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 30000 }
-  );
-  const { stderr } = await execAsync(
-    `${COMPOSE_CMD} up -d --force-recreate --no-deps ${serviceName}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 60000 }
-  );
-  if (stderr && /error/i.test(stderr) && !/pulling|creating|starting|created|started/i.test(stderr)) {
+function failOnComposeError(stderr: string): void {
+  if (stderr && /error/i.test(stderr) && !/pulling|creating|starting|created|started|recreate/i.test(stderr)) {
     throw new Error(stderr.trim());
   }
-}
-
-export async function composeUpAll(): Promise<void> {
-  await execAsync(
-    `${COMPOSE_CMD} up -d`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 120000 }
-  );
 }
 
 export async function composeUpTriton(): Promise<void> {
-  syncTritonServices();
+  await syncTritonEnv();
   const { stderr } = await execAsync(
-    `${COMPOSE_CMD} up -d --no-deps ${TRITON_SERVICE_NAME}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 300000 } // image pull can take a while
+    `${COMPOSE_CMD} up -d ${TRITON_SERVICE_NAME}`,
+    { cwd: PYTHON_COUNTING_DIR, timeout: 300000 }, // image pull can take a while
   );
-  if (stderr && /error/i.test(stderr) && !/pulling|creating|starting|created|started/i.test(stderr)) {
-    throw new Error(stderr.trim());
-  }
+  failOnComposeError(stderr);
 }
 
 export async function composeStopTriton(): Promise<void> {
-  await execAsync(
-    `${COMPOSE_CMD} stop ${TRITON_SERVICE_NAME}`,
-    { cwd: PYTHON_COUNTING_DIR, timeout: 60000 }
-  );
+  await execAsync(`${COMPOSE_CMD} stop ${TRITON_SERVICE_NAME}`, { cwd: PYTHON_COUNTING_DIR, timeout: 60000 });
 }
 
 export async function composeRestartTriton(): Promise<void> {
@@ -401,10 +111,3 @@ export async function imageExists(imageName: string): Promise<boolean> {
     return false;
   }
 }
-
-// stream-gateway's build/lifecycle is owned by dashboard/docker-compose.yml
-// (`docker compose up -d --build` builds it from ../stream-gateway alongside the
-// dashboard), so the dashboard no longer shells out to build/start/stop it. The
-// old composeBuild/Up/Stop/RestartStreamGateway helpers and their
-// /api/stream-gateway/[action] route are gone — nothing in the UI ever called
-// them, and they targeted a compose file that no longer declares the service.

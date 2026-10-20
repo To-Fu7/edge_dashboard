@@ -17,13 +17,12 @@
 //
 // Because we own the whole file, config generation is a plain full rewrite:
 // no marker comments, no byte-for-byte preservation, no brace-depth parsing.
-import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { listEnvFiles, readDeviceEnv } from './env-parser';
+import { query, queryOne } from './db';
 import { readSettings } from './settings';
 
 const execAsync = promisify(exec);
@@ -45,22 +44,15 @@ const DEFAULT_NGINX_CONTAINER = 'edge-portfwd-nginx';
 const DEFAULT_NGINX_CONFIG_PATH = '/etc/nginx/nginx.conf';
 
 // ---------------------------------------------------------------------------
-// Forward registry
-//
-// Forwards live in their own JSON file next to settings.json (the dashboard's
-// persistent data volume), managed from Settings → Nginx. A forward either
-// points at a registered camera (deviceCode set — its target is pre-filled from
-// that camera's RTSP URL) or at any host:port typed in by hand.
-//
-// Before this registry existed, a device carried at most one forward in its
-// own .env (PORTFWD_*). Those are imported once, the first time the registry
-// file is read and doesn't exist yet.
+// Forward registry — table port_forwards. A forward either belongs to a camera
+// (device_id set; its target is pre-filled from that camera's RTSP URL and it is
+// deleted together with the device) or points at any host:port typed by hand.
 // ---------------------------------------------------------------------------
 
 export interface PortForward {
   id: string;
   name: string;
-  deviceCode: string | null;   // camera this forward was created for (label/link only)
+  deviceCode: string | null;   // camera this forward belongs to (null = manual)
   srcIp: string;               // target host (camera / NVR IP)
   srcPort: string;             // target port, usually 554 for RTSP
   listenPort: string;          // host port in LISTEN_PORT_MIN..LISTEN_PORT_MAX
@@ -70,52 +62,18 @@ export interface PortForward {
 
 export type PortForwardInput = Omit<PortForward, 'id' | 'createdAt'>;
 
-const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(process.cwd(), 'data', 'settings.json');
-const FORWARDS_FILE = process.env.FORWARDS_FILE || path.join(path.dirname(SETTINGS_FILE), 'forwards.json');
+const SELECT_FORWARDS = `
+  SELECT f.id, f.name, d.code AS "deviceCode", f.src_ip AS "srcIp", f.src_port::text AS "srcPort",
+         f.listen_port::text AS "listenPort", f.enabled, f.created_at AS "createdAt"
+    FROM port_forwards f LEFT JOIN devices d ON d.id = f.device_id`;
 
-function importLegacyForwards(): PortForward[] {
-  const imported: PortForward[] = [];
-  for (const code of listEnvFiles()) {
-    const env = readDeviceEnv(code);
-    if (!env?.PORTFWD_LISTEN_PORT || !env.PORTFWD_SRC_IP) continue;
-    imported.push({
-      id: crypto.randomUUID(),
-      name: env.DEVICE_NAME || code,
-      deviceCode: code,
-      srcIp: env.PORTFWD_SRC_IP,
-      srcPort: env.PORTFWD_SRC_PORT || '554',
-      listenPort: env.PORTFWD_LISTEN_PORT,
-      enabled: env.PORTFWD_ENABLED === 'true',
-      createdAt: new Date().toISOString(),
-    });
-  }
-  return imported;
-}
-
-export function readForwards(): PortForward[] {
-  if (!fs.existsSync(FORWARDS_FILE)) {
-    const imported = importLegacyForwards();
-    writeForwards(imported);
-    return imported;
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(FORWARDS_FILE, 'utf-8'));
-    return Array.isArray(parsed.forwards) ? parsed.forwards : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeForwards(forwards: PortForward[]): void {
-  fs.mkdirSync(path.dirname(FORWARDS_FILE), { recursive: true });
-  const tmp = `${FORWARDS_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ forwards }, null, 2), 'utf-8');
-  fs.renameSync(tmp, FORWARDS_FILE);
+export async function readForwards(): Promise<PortForward[]> {
+  return query<PortForward>(`${SELECT_FORWARDS} ORDER BY f.listen_port`);
 }
 
 // Only enabled forwards end up in nginx.conf.
-export function collectPortForwards(): PortForward[] {
-  return readForwards().filter(f => f.enabled);
+export async function collectPortForwards(): Promise<PortForward[]> {
+  return query<PortForward>(`${SELECT_FORWARDS} WHERE f.enabled ORDER BY f.listen_port`);
 }
 
 // Target host/port of a camera's RTSP URL, used to pre-fill a forward when a
@@ -136,7 +94,7 @@ const HOST_RE = /^[A-Za-z0-9.-]+$/;
 // Returns a human-readable problem with the forward, or null if it's valid.
 // Port checks are against this registry (and the published range), NOT a live
 // OS-level socket probe.
-export function validateForward(input: PortForwardInput, excludeId?: string): string | null {
+export async function validateForward(input: PortForwardInput, excludeId?: string): Promise<string | null> {
   if (!input.name?.trim()) return 'Name is required';
   if (!input.srcIp || !HOST_RE.test(input.srcIp)) return 'Target IP/host is invalid';
   const srcPort = Number(input.srcPort);
@@ -145,51 +103,45 @@ export function validateForward(input: PortForwardInput, excludeId?: string): st
   if (!Number.isInteger(n) || n < LISTEN_PORT_MIN || n > LISTEN_PORT_MAX) {
     return `Listen port must be between ${LISTEN_PORT_MIN} and ${LISTEN_PORT_MAX} (the range published by the port-forward nginx container)`;
   }
-  const clash = readForwards().find(f => f.id !== excludeId && f.listenPort === String(n));
+  const clash = await queryOne<{ name: string }>(
+    'SELECT name FROM port_forwards WHERE listen_port = $1 AND id <> COALESCE($2::uuid, \'00000000-0000-0000-0000-000000000000\')',
+    [n, excludeId ?? null]);
   if (clash) return `Listen port ${n} is already used by "${clash.name}"`;
-  return null;
-}
-
-export function suggestListenPort(): string | null {
-  const used = new Set(readForwards().map(f => f.listenPort));
-  for (let p = LISTEN_PORT_MIN; p <= LISTEN_PORT_MAX; p++) {
-    if (!used.has(String(p))) return String(p);
+  if (input.deviceCode && !(await queryOne('SELECT 1 FROM devices WHERE code = $1', [input.deviceCode]))) {
+    return `Camera "${input.deviceCode}" no longer exists`;
   }
   return null;
 }
 
-function normalize(input: PortForwardInput): PortForwardInput {
-  return {
-    name: input.name.trim(),
-    deviceCode: input.deviceCode || null,
-    srcIp: input.srcIp.trim(),
-    srcPort: String(Number(input.srcPort)),
-    listenPort: String(Number(input.listenPort)),
-    enabled: input.enabled !== false,
-  };
+export async function suggestListenPort(): Promise<string | null> {
+  const used = new Set((await query<{ p: number }>('SELECT listen_port AS p FROM port_forwards')).map(r => r.p));
+  for (let p = LISTEN_PORT_MIN; p <= LISTEN_PORT_MAX; p++) {
+    if (!used.has(p)) return String(p);
+  }
+  return null;
 }
 
-export function createForward(input: PortForwardInput): PortForward {
-  const forward: PortForward = { ...normalize(input), id: crypto.randomUUID(), createdAt: new Date().toISOString() };
-  writeForwards([...readForwards(), forward]);
-  return forward;
+function params(input: PortForwardInput): unknown[] {
+  return [input.name.trim(), input.deviceCode || null, input.srcIp.trim(), Number(input.srcPort), Number(input.listenPort), input.enabled !== false];
 }
 
-export function updateForward(id: string, input: PortForwardInput): PortForward | null {
-  const forwards = readForwards();
-  const i = forwards.findIndex(f => f.id === id);
-  if (i < 0) return null;
-  forwards[i] = { ...forwards[i], ...normalize(input) };
-  writeForwards(forwards);
-  return forwards[i];
+export async function createForward(input: PortForwardInput): Promise<PortForward> {
+  const row = await queryOne<{ id: string }>(
+    `INSERT INTO port_forwards (name, device_id, src_ip, src_port, listen_port, enabled)
+     VALUES ($1, (SELECT id FROM devices WHERE code = $2), $3, $4, $5, $6) RETURNING id`, params(input));
+  return (await queryOne<PortForward>(`${SELECT_FORWARDS} WHERE f.id = $1`, [row!.id]))!;
 }
 
-export function deleteForward(id: string): boolean {
-  const forwards = readForwards();
-  const next = forwards.filter(f => f.id !== id);
-  if (next.length === forwards.length) return false;
-  writeForwards(next);
-  return true;
+export async function updateForward(id: string, input: PortForwardInput): Promise<PortForward | null> {
+  const row = await queryOne<{ id: string }>(
+    `UPDATE port_forwards SET name = $1, device_id = (SELECT id FROM devices WHERE code = $2), src_ip = $3,
+            src_port = $4, listen_port = $5, enabled = $6
+      WHERE id = $7 RETURNING id`, [...params(input), id]);
+  return row ? queryOne<PortForward>(`${SELECT_FORWARDS} WHERE f.id = $1`, [id]) : null;
+}
+
+export async function deleteForward(id: string): Promise<boolean> {
+  return (await query('DELETE FROM port_forwards WHERE id = $1 RETURNING id', [id])).length > 0;
 }
 
 // Builds the COMPLETE nginx.conf for the dedicated forwarder — a stream-only
@@ -236,11 +188,11 @@ export interface DeployResult {
 // of dashboard-managed forwards, validates the candidate with `nginx -t`
 // BEFORE touching the live file, and only then swaps it in and reloads. An
 // invalid candidate never reaches the real nginx.conf path.
-export function getForwarderTarget(): { containerName: string; configPath: string } {
-  const settings = readSettings();
+export async function getForwarderTarget(): Promise<{ containerName: string; configPath: string }> {
+  const settings = await readSettings().catch(() => null);
   return {
-    containerName: settings.portForward?.nginxContainerName || DEFAULT_NGINX_CONTAINER,
-    configPath: settings.portForward?.nginxConfigPath || DEFAULT_NGINX_CONFIG_PATH,
+    containerName: settings?.portForward?.nginxContainerName || DEFAULT_NGINX_CONTAINER,
+    configPath: settings?.portForward?.nginxConfigPath || DEFAULT_NGINX_CONFIG_PATH,
   };
 }
 
@@ -248,7 +200,7 @@ export function getForwarderTarget(): { containerName: string; configPath: strin
 // or null when the forwarder isn't reachable. Compared against
 // buildNginxConf(collectPortForwards()) to show whether a redeploy is pending.
 export async function readLiveNginxConf(): Promise<string | null> {
-  const { containerName, configPath } = getForwarderTarget();
+  const { containerName, configPath } = await getForwarderTarget();
   try {
     const { stdout } = await execAsync(`docker exec ${containerName} cat "${configPath}"`, { timeout: 10000 });
     return stdout;
@@ -258,10 +210,10 @@ export async function readLiveNginxConf(): Promise<string | null> {
 }
 
 export async function deployPortForwardConfig(): Promise<DeployResult> {
-  const { containerName, configPath } = getForwarderTarget();
+  const { containerName, configPath } = await getForwarderTarget();
   const candidatePath = `${configPath}.candidate`;
 
-  const newConf = buildNginxConf(collectPortForwards());
+  const newConf = buildNginxConf(await collectPortForwards());
 
   const tmpFile = path.join(os.tmpdir(), `nginx-candidate-${Date.now()}.conf`);
   fs.writeFileSync(tmpFile, newConf, 'utf-8');

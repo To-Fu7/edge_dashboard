@@ -152,23 +152,15 @@ export interface GlobalSettings {
   triton: TritonSettings;
   streamGateway: StreamGatewaySettings;
   portForward: PortForwardSettings;
-  pg: {
-    host: string;
-    port: string;
-    db: string;
-    user: string;
-    pass: string;
-  };
   mqtt: {
     broker: string;
     port: string;
     username: string;
     password: string;
-    activityTopicTemplate: string;   // '{code}' is replaced with the device code at creation time
+    activityTopicTemplate: string;   // '{code}' is replaced with the device code (recomputed when the code changes)
     intervalTopicTemplate: string;
   };
   defaults: {
-    debug_mode: string;
     mqtt_interval_minutes: string;
     daily_send_time: string;
     yolo_confidence: string;
@@ -206,13 +198,6 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     nginxContainerName: 'edge-portfwd-nginx',
     nginxConfigPath: '/etc/nginx/nginx.conf',
   },
-  pg: {
-    host: 'host.docker.internal',
-    port: '5432',
-    db: 'postgres',
-    user: 'postgres',
-    pass: '',
-  },
   mqtt: {
     broker: '',
     port: '1883',
@@ -222,7 +207,6 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     intervalTopicTemplate: '/resampling_person/{code}',
   },
   defaults: {
-    debug_mode: 'false',
     mqtt_interval_minutes: '5',
     daily_send_time: '23:59',
     yolo_confidence: '0.3',

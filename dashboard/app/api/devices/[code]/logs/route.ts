@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getContainerLogs } from '@/lib/docker';
-import { getContainerName } from '@/lib/compose';
+import { requireDevice } from '@/lib/devices';
+import { containerNameFor } from '@/lib/device-config';
+import { apiError } from '@/lib/device-api';
 
 export async function GET(
   request: Request,
@@ -12,10 +14,10 @@ export async function GET(
   const since = url.searchParams.get('since');
 
   try {
-    const containerName = getContainerName(code);
+    const containerName = containerNameFor((await requireDevice(code)).code);
     const logs = await getContainerLogs(containerName, tail, since ? parseInt(since, 10) : undefined);
     return NextResponse.json({ logs });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

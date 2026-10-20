@@ -1,4 +1,5 @@
-import { getContainerName } from '@/lib/compose';
+import { getDevice } from '@/lib/devices';
+import { containerNameFor } from '@/lib/device-config';
 import { getDocker } from '@/lib/docker';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +13,9 @@ export async function GET(
   const { code } = await params;
   const url = new URL(request.url);
   const tail = parseInt(url.searchParams.get('tail') || '100', 10);
-  const containerName = getContainerName(code);
+  const device = await getDevice(code).catch(() => null);
+  if (!device) return new Response('Device not found', { status: 404 });
+  const containerName = containerNameFor(device.code);
   const encoder = new TextEncoder();
 
   let logStream: (NodeJS.ReadableStream & { destroy?: () => void }) | null = null;

@@ -55,7 +55,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const settings = readSettings();
+    const settings = await readSettings();
     const embedModel = settings.triton.faceEmbedModel;
     if (!embedModel) {
       return NextResponse.json(

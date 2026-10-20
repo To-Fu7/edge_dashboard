@@ -1,4 +1,5 @@
 import { PYTHON_COUNTING_DIR } from '@/lib/compose';
+import { DEVICE_IMAGE } from '@/lib/device-runtime';
 import { streamSteps, streamResponse } from '@/lib/buildStream';
 
 export const dynamic = 'force-dynamic';
@@ -10,10 +11,10 @@ export const dynamic = 'force-dynamic';
 export async function POST() {
   const stream = streamSteps([
     {
-      label: 'Build camera image (python-counting-services-python-1)',
+      label: `Build camera image (${DEVICE_IMAGE})`,
       command: {
         cmd: 'docker',
-        args: ['build', '-t', 'python-counting-services-python-1:latest', '-f', 'dockerfile', '.'],
+        args: ['build', '-t', DEVICE_IMAGE, '-f', 'dockerfile', '.'],
         cwd: PYTHON_COUNTING_DIR,
       },
     },

@@ -1,97 +1,68 @@
 import { NextResponse } from 'next/server';
-import { readDeviceEnv, writeDeviceEnv, deleteDeviceEnv } from '@/lib/env-parser';
-import { removeService, serviceExists, getContainerName, composeStop } from '@/lib/compose';
-import { getContainerStatus } from '@/lib/docker';
-import { upsertCameraStream, removeCameraStream } from '@/lib/stream-gateway';
+import { requireDevice, updateDevice, deleteDevice } from '@/lib/devices';
+import { deviceContainerStatuses, ensureContainer, removeDeviceContainer, startDevice } from '@/lib/device-runtime';
+import { apiError, inheritanceInfo, publicEnv, syncStreamRegistration } from '@/lib/device-api';
+import { containerNameFor } from '@/lib/device-config';
+import { removeCameraStream } from '@/lib/stream-gateway';
+import { deployPortForwardConfig } from '@/lib/portforward';
+import { isAdmin, requestUser } from '@/lib/auth';
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ code: string }> }
-) {
-  const { code } = await params;
-  const env = readDeviceEnv(code);
-  if (!env) {
-    return NextResponse.json({ error: 'Device not found' }, { status: 404 });
-  }
-  const containerName = getContainerName(code);
-  const status = await getContainerStatus(containerName);
-  return NextResponse.json({ env, status, containerName });
-}
+export const dynamic = 'force-dynamic';
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ code: string }> }
-) {
-  const { code } = await params;
+type Ctx = { params: Promise<{ code: string }> };
+
+export async function GET(request: Request, { params }: Ctx) {
   try {
-    const body = await request.json();
-    const existing = readDeviceEnv(code);
-    if (!existing) {
-      return NextResponse.json({ error: 'Device not found' }, { status: 404 });
-    }
-
-    // Merge, don't replace — a partial body (any field left out) must not
-    // wipe the rest back to writeDeviceEnv's hardcoded defaults. The real
-    // device edit page always sends the full env object it loaded via GET,
-    // so this was never reachable through normal use, but it's the correct
-    // way to implement PUT regardless (same class of bug just fixed in
-    // /api/settings).
-    const merged = { ...existing, ...body };
-    writeDeviceEnv(code, merged);
-
-    // Best-effort: re-push this device's stream config to stream-gateway on
-    // every save, same "regenerate from current state" posture as the
-    // compose-service regeneration elsewhere in this file. Not blocking —
-    // stream-gateway being down shouldn't fail a settings save.
-    if (merged.RTSP_URL) {
-      upsertCameraStream(code, {
-        rtspUrl: merged.RTSP_URL,
-        onDemand: merged.STREAM_GATEWAY_ALWAYS_ON !== 'true',
-        includeAudio: merged.STREAM_GATEWAY_AUDIO === 'true',
-      }).catch(err => console.warn(`stream-gateway update failed for ${code}:`, err));
-    }
-    const subCode = `${code}_sub`;
-    if (merged.SUBSTREAM_URL) {
-      upsertCameraStream(subCode, {
-        rtspUrl: merged.SUBSTREAM_URL,
-        onDemand: merged.STREAM_GATEWAY_ALWAYS_ON !== 'true',
-        includeAudio: merged.STREAM_GATEWAY_AUDIO === 'true',
-      }).catch(err => console.warn(`stream-gateway update failed for ${subCode}:`, err));
-    } else {
-      // Substream URL was cleared — deregister it if it existed.
-      removeCameraStream(subCode).catch(() => {});
-    }
-
-    return NextResponse.json({ success: true });
+    const device = await requireDevice((await params).code);
+    const container = (await deviceContainerStatuses().catch(() => new Map())).get(device.id);
+    const base = {
+      id: device.id,
+      status: container?.status ?? 'not_found',
+      containerName: container?.name ?? containerNameFor(device.code),
+      configVersion: device.config_version,
+      enabled: device.enabled,
+    };
+    if (!isAdmin(request)) return NextResponse.json({ ...base, env: publicEnv(device.effective_env) });
+    return NextResponse.json({ ...base, env: device.effective_env, ...inheritanceInfo(device) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }
 
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ code: string }> }
-) {
-  const { code } = await params;
+// Saves the device form. The config change reaches the running container by
+// itself (NOTIFY → config_watch); only a code change needs the container
+// recreated, since its name is derived from the code.
+export async function PUT(request: Request, { params }: Ctx) {
   try {
-    try {
-      await composeStop(code);
-    } catch {
-      // Ignore stop errors (container may not exist)
+    const env = await request.json();
+    const { device, previous, codeChanged } = await updateDevice((await params).code, env, requestUser(request)?.id ?? null);
+    syncStreamRegistration(device, previous.code);
+    if (codeChanged) {
+      if (device.enabled) await startDevice(device);
+      else await ensureContainer(device);
     }
+    return NextResponse.json({
+      success: true,
+      deviceCode: device.code,
+      codeChanged,
+      configVersion: device.config_version,
+      applied: device.config_version !== previous.config_version,
+    });
+  } catch (e) {
+    return apiError(e);
+  }
+}
 
-    if (serviceExists(code)) {
-      removeService(code);
-    }
-
-    deleteDeviceEnv(code);
-
-    // Best-effort, same non-blocking posture as PUT above.
-    removeCameraStream(code).catch(() => {});
-    removeCameraStream(`${code}_sub`).catch(() => {});
-
+export async function DELETE(_req: Request, { params }: Ctx) {
+  try {
+    const device = await requireDevice((await params).code);
+    await removeDeviceContainer(device.id);
+    await deleteDevice(device.id);           // port forwards and history go with it (ON DELETE CASCADE)
+    removeCameraStream(device.code).catch(() => {});
+    removeCameraStream(`${device.code}_sub`).catch(() => {});
+    deployPortForwardConfig().catch(() => {});
     return NextResponse.json({ success: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

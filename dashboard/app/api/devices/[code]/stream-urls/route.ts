@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { readDeviceEnv } from '@/lib/env-parser';
+import { getDevice } from '@/lib/devices';
 import { getCameraStreamUrls, upsertCameraStream } from '@/lib/stream-gateway';
 import { readSettings } from '@/lib/settings';
 
@@ -22,10 +22,11 @@ export async function GET(
   { params }: { params: Promise<{ code: string }> }
 ) {
   const { code } = await params;
-  const env = readDeviceEnv(code);
-  if (!env) {
+  const device = await getDevice(code).catch(() => null);
+  if (!device) {
     return NextResponse.json({ error: 'Device not found' }, { status: 404 });
   }
+  const env = device.effective_env;
   if (!env.RTSP_URL) {
     return NextResponse.json({ error: 'RTSP_URL not configured' }, { status: 400 });
   }
@@ -57,7 +58,7 @@ export async function GET(
     return NextResponse.json({
       main,
       sub,
-      publicBaseUrl: readSettings().streamGateway.publicBaseUrl,
+      publicBaseUrl: (await readSettings()).streamGateway.publicBaseUrl,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });

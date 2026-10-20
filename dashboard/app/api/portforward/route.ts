@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getContainerLogs, getContainerStatus } from '@/lib/docker';
-import { listEnvFiles, readDeviceEnv } from '@/lib/env-parser';
+import { listDevices } from '@/lib/devices';
 import {
   buildNginxConf, collectPortForwards, createForward, deployPortForwardConfig, getForwarderTarget,
   readForwards, readLiveNginxConf, suggestListenPort, targetFromRtsp, validateForward,
   LISTEN_PORT_MIN, LISTEN_PORT_MAX, type PortForwardInput,
 } from '@/lib/portforward';
+import { apiError } from '@/lib/device-api';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,16 +18,15 @@ export async function GET(request: Request) {
     // Device page: just that camera's forwards, no docker round-trips.
     const device = new URL(request.url).searchParams.get('device');
     if (device) {
-      return NextResponse.json({ forwards: readForwards().filter(f => f.deviceCode === device) });
+      return NextResponse.json({ forwards: (await readForwards()).filter(f => f.deviceCode === device) });
     }
 
-    const { containerName, configPath } = getForwarderTarget();
-    const forwards = readForwards();
-    const expectedConf = buildNginxConf(collectPortForwards());
-    const cameras = listEnvFiles().map(code => {
-      const env = readDeviceEnv(code);
-      return { code, name: env?.DEVICE_NAME || code, target: targetFromRtsp(env?.RTSP_URL) };
-    });
+    const { containerName, configPath } = await getForwarderTarget();
+    const [forwards, enabled, devices, suggestedPort] = await Promise.all([
+      readForwards(), collectPortForwards(), listDevices(), suggestListenPort(),
+    ]);
+    const expectedConf = buildNginxConf(enabled);
+    const cameras = devices.map(d => ({ code: d.code, name: d.name, target: targetFromRtsp(d.effective_env.RTSP_URL) }));
     const [status, liveConf, logs] = await Promise.all([
       getContainerStatus(containerName),
       readLiveNginxConf(),
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
       configPath,
       status,
       portRange: [LISTEN_PORT_MIN, LISTEN_PORT_MAX],
-      suggestedPort: suggestListenPort(),
+      suggestedPort,
       forwards,
       cameras,
       liveConf,
@@ -46,7 +46,7 @@ export async function GET(request: Request) {
       logs,
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }
 
@@ -54,12 +54,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const input = (await request.json()) as PortForwardInput;
-    const problem = validateForward(input);
+    const problem = await validateForward(input);
     if (problem) return NextResponse.json({ error: problem }, { status: 400 });
-    const forward = createForward(input);
+    const forward = await createForward(input);
     const deploy = await deployPortForwardConfig();
     return NextResponse.json({ forward, deploy }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

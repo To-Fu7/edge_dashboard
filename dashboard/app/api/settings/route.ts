@@ -1,53 +1,52 @@
 import { NextResponse } from 'next/server';
-import { readSettings, writeSettings } from '@/lib/settings';
-import { applyHardwareModeToAll } from '@/lib/compose';
+import { readSettings, updateSettings, settingsHistory } from '@/lib/settings';
+import { applySettingsToDevices } from '@/lib/devices';
+import { writeTritonEnv } from '@/lib/compose';
+import { apiError } from '@/lib/device-api';
+import { isAdmin, requestUser } from '@/lib/auth';
+import type { GlobalSettings } from '@/lib/types';
 
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
   try {
-    const settings = readSettings();
+    const settings = await readSettings();
+    if (!isAdmin(request)) {
+      // `user` only needs the dashboard name and the stream host override.
+      return NextResponse.json({ settings: { appName: settings.appName, streamGateway: settings.streamGateway } });
+    }
+    const url = new URL(request.url);
+    if (url.searchParams.get('history') === '1') {
+      return NextResponse.json({ settings, history: await settingsHistory() });
+    }
     return NextResponse.json({ settings });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }
 
+// Saves global settings and applies them to every device right away: devices
+// whose effective env changes get a new config version and a NOTIFY, and their
+// containers pick it up without anyone pressing Restart.
 export async function PUT(request: Request) {
   try {
-    const prev = readSettings();
-    const { applyHardwareMode, ...body } = await request.json();
+    // applyHardwareMode: rewrite python-counting/.env even if mode/tag didn't
+    // change (setup/install.sh uses it on a fresh checkout).
+    const { applyHardwareMode, ...patch } = await request.json() as Partial<GlobalSettings> & { applyHardwareMode?: boolean };
+    const { previous, next } = await updateSettings(patch, requestUser(request)?.id ?? null);
 
-    // Merge, don't replace — a caller sending a partial body (e.g. just
-    // { triton: { imageTag } }) must not blow away every other section
-    // (pg/mqtt credentials, hardwareMode, ...). Nested objects merge shallowly
-    // per-section, matching how each section is a flat bag of fields with no
-    // further nesting.
-    const merged = {
-      ...prev,
-      ...body,
-      triton: { ...prev.triton, ...body.triton },
-      streamGateway: { ...prev.streamGateway, ...body.streamGateway },
-      portForward: { ...prev.portForward, ...body.portForward },
-      pg: { ...prev.pg, ...body.pg },
-      mqtt: { ...prev.mqtt, ...body.mqtt },
-      defaults: { ...prev.defaults, ...body.defaults },
-    };
-    writeSettings(merged);
+    const modeChanged = next.hardwareMode !== previous.hardwareMode;
+    const tagChanged = next.triton.imageTag !== previous.triton.imageTag;
+    if (modeChanged || tagChanged || applyHardwareMode) writeTritonEnv(next);
 
-    const modeChanged = body.hardwareMode && body.hardwareMode !== prev.hardwareMode;
-    const tritonTagChanged = body.triton?.imageTag && body.triton.imageTag !== prev.triton.imageTag;
-    // applyHardwareMode: regenerate the triton/builder services even when the
-    // values didn't change — used by setup/install.sh on a fresh checkout, whose
-    // committed docker-compose.yml always carries the x86 server image.
-    if (modeChanged || tritonTagChanged || applyHardwareMode) {
-      // regenerates every camera service AND the triton/model-builder services
-      applyHardwareModeToAll(body.hardwareMode ?? prev.hardwareMode, body.triton?.imageTag);
-    }
+    const { updated } = await applySettingsToDevices(next);
     return NextResponse.json({
       success: true,
-      // jetson/server engines are TRT-version-specific — prompt a rebuild in the UI
-      engineRebuildRecommended: Boolean(modeChanged || tritonTagChanged || applyHardwareMode),
+      devicesUpdated: updated,
+      // jetson/server engines are TRT-version-specific — the UI prompts a rebuild
+      engineRebuildRecommended: Boolean(modeChanged || tagChanged || applyHardwareMode),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return apiError(e);
   }
 }

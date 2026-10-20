@@ -1,7 +1,7 @@
 import { request as httpRequest } from 'node:http';
-import { readDeviceEnv } from '@/lib/env-parser';
+import { getDevice } from '@/lib/devices';
 import { getDocker } from '@/lib/docker';
-import { getContainerName } from '@/lib/compose';
+import { containerNameFor } from '@/lib/device-config';
 
 async function getContainerHost(containerName: string): Promise<string> {
   try {
@@ -22,15 +22,16 @@ export async function GET(
   { params }: { params: Promise<{ code: string }> }
 ) {
   const { code } = await params;
-  const env = readDeviceEnv(code);
+  const device = await getDevice(code).catch(() => null);
+  const env = device?.effective_env;
   const annotatedEnabled = env?.ANNOTATED_STREAM === 'true';
   const streamPort = parseInt(env?.STREAM_PORT || '8090', 10);
 
-  if (!env || !annotatedEnabled || streamPort <= 0) {
+  if (!device || !env || !annotatedEnabled || streamPort <= 0) {
     return new Response('Annotated stream not configured', { status: 404 });
   }
 
-  const containerName = getContainerName(code);
+  const containerName = containerNameFor(device.code);
   const host = await getContainerHost(containerName);
   console.log(`[annotated] host=${host} port=${streamPort}`);
 

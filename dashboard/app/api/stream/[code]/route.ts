@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import { spawn } from 'child_process';
-import { readDeviceEnv } from '@/lib/env-parser';
+import { getDevice } from '@/lib/devices';
 import { getDocker } from '@/lib/docker';
-import { getContainerName } from '@/lib/compose';
+import { containerNameFor } from '@/lib/device-config';
 import { proxyAnnotatedStream } from '@/lib/mjpegProxy';
 
 async function isContainerRunning(containerName: string): Promise<boolean> {
@@ -22,12 +22,13 @@ export async function GET(
 ) {
   const { code } = await params;
 
-  const env = readDeviceEnv(code);
-  if (!env?.RTSP_URL) {
+  const device = await getDevice(code).catch(() => null);
+  const env = device?.effective_env;
+  if (!device || !env?.RTSP_URL) {
     return new Response('RTSP_URL not configured', { status: 400 });
   }
 
-  const containerName = getContainerName(code);
+  const containerName = containerNameFor(device.code);
   const url = new URL(request.url);
   const plain = url.searchParams.get('plain') === '1';
   const streamPort = parseInt(env.STREAM_PORT || '8090', 10);
