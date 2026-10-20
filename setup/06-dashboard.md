@@ -82,12 +82,12 @@ Lalu **Settings → General**: nama dashboard.
 | Cek | Cara | Hasil yang benar |
 |---|---|---|
 | Dashboard | Buka `http://<ip-server>:3001` | Masuk ke halaman Stream |
-| Triton | Detection → Dashboard | Triton online, model terdaftar, kartu GPU menampilkan watt & VRAM |
+| Triton | Dashboard | Triton online, model terdaftar, kartu GPU menampilkan watt & VRAM |
 | Mount builder | Detection → Build & Inference | Tidak ada peringatan `HOST_PYTHON_COUNTING_DIR` |
 | Nginx | Settings → Nginx | `edge-portfwd-nginx` Running |
 | Node-RED | Klik Automation | Editor Node-RED tampil di dalam halaman |
 | Stream gateway | `curl -s -o /dev/null -w '%{http_code}\n' localhost:8555/` | Ada respons HTTP (bukan connection refused) |
-| Login | Masuk sebagai `user` | Sidebar hanya berisi Stream dan Detection → Dashboard |
+| Login | Masuk sebagai `user` | Sidebar hanya berisi Stream dan Dashboard |
 
 ## Kalau error
 

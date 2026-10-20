@@ -9,7 +9,7 @@ ganti model, update besar). Semua harus ✅ sebelum sistem dianggap siap.
 |---|---|---|---|
 | 1 | GPU di container | `docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi` | GPU tampil |
 | 2 | Data di NVMe | `docker info --format '{{.DockerRootDir}}'` dan `findmnt /opt/ai` | Di bawah `/data` |
-| 2b | Login & role | Masuk sebagai `user` | Hanya Stream dan Detection → Dashboard yang tampil |
+| 2b | Login & role | Masuk sebagai `user` | Hanya Stream dan Dashboard yang tampil |
 | 3 | Semua container jalan | `docker ps --format '{{.Names}}\t{{.Status}}'` | Triton, dashboard, stream-gateway, nginx, edge-nodered, DB, MQTT, dan semua `device-*` berstatus `Up` (bukan `Restarting`) |
 | 4 | Model siap | `curl -s -X POST localhost:8000/v2/repository/index` | Semua `READY` |
 | 5 | Batch benar | `tools/batch_check.py` ([05](05-triton.md#verifikasi)) | Semua frame punya deteksi |
@@ -19,7 +19,7 @@ ganti model, update besar). Semua harus ✅ sebelum sistem dianggap siap.
 | 9 | MQTT terkirim | `docker exec -it env_services_mqtt mosquitto_sub -t '/resampling_person/#' -v` | Pesan muncul tiap 5 menit per kamera |
 | 10 | Live view | Halaman Stream | Semua kamera tampil, tidak hitam |
 | 10b | Settings realtime | Ubah JPEG quality di Detection → Settings | Dalam beberapa detik kartu kamera menampilkan config versi baru tanpa restart; log kamera: `[config] applied vN without restart` |
-| 11 | GPU tidak penuh | Kartu GPU di Detection → Dashboard | Power < 90% dari limit |
+| 11 | GPU tidak penuh | Kartu GPU di Dashboard | Power < 90% dari limit |
 | 12 | Tahan restart | `sudo reboot`, lalu ulangi #3, #4, #6 | Semua kembali sendiri |
 
 ### Query DB
@@ -53,7 +53,7 @@ SELECT device_id, total_in, total_out, created_at FROM person_inout ORDER BY cre
 | 3 (Triton), 4, 5 | [05-triton.md](05-triton.md#kalau-error) |
 | 3 (dashboard/gateway/nginx/nodered), 10 | [06-dashboard.md](06-dashboard.md#kalau-error) |
 | 3 (`device-*` restart terus), 6 | [07-add-camera.md](07-add-camera.md#kalau-error) |
-| 7, 8 | Kartu kamera di Detection → Dashboard (status, error terakhir), lalu [01-database.md](01-database.md#kalau-error) dan [07](07-add-camera.md#kalau-error) |
+| 7, 8 | Kartu kamera di Dashboard (status, error terakhir), lalu [01-database.md](01-database.md#kalau-error) dan [07](07-add-camera.md#kalau-error) |
 | 9 | [02-mqtt.md](02-mqtt.md#kalau-error) |
 | 11 | Kurangi kamera yang memakai model 1280, atau tambah GPU |
 | 12 | [00-pre-setup.md](00-pre-setup.md) langkah 4 (`RequiresMountsFor`, fstab) |

@@ -94,7 +94,7 @@ cukup `git pull` + Restart container**. Rebuild image hanya kalau
 ### 3.1 Person counting (selalu aktif)
 
 `DETECTION_MODE=line_crossing` (garis `lineA..`) atau `zone` (polygon
-`zoneA..`), digambar di dashboard → Detection → Devices → tab Lines. Output:
+`zoneA..`), digambar di dashboard → Devices → (kamera) → tab Line Configuration. Output:
 `person_inout`, `inout_resample`, MQTT event per orang + interval 5 menit.
 
 Kalibrasi garis manual di resolusi asli: `python tools/calibrate_lines.py
@@ -263,7 +263,7 @@ Di image produksi semua lulus kecuali tiga test yang butuh torch/ultralytics
 | ±separuh frame tanpa deteksi, box berkedip di semua kamera | Model export `nms=True` + dynamic batching (hanya index 0 yang terisi). Pakai model `*_e2e_u8`, cek `batch_check.py`. |
 | Mengira batching mati padahal aktif | Dengan `--strict-model-config=false`, Triton otomatis menyalakan dynamic batching. Satu-satunya cara mematikan: `max_batch_size: 1`. |
 | Menambah `instance_group count` tidak menaikkan FPS | Antrian berasal dari delay batching + GPU yang memang serial. Turunkan `max_queue_delay_microseconds` atau pakai model lebih ringan. |
-| FPS rendah setelah naik ke 1280 | Biaya ~4× per frame. Cek watt GPU (kartu GPU di Detection → Dashboard). RTX 2000 Ada dibatasi 70 W, jadi ≥ 90% berarti GPU sudah penuh. |
+| FPS rendah setelah naik ke 1280 | Biaya ~4× per frame. Cek watt GPU (kartu GPU di Dashboard). RTX 2000 Ada dibatasi 70 W, jadi ≥ 90% berarti GPU sudah penuh. |
 | Model jalan di CPU, GPU idle | `config.pbtxt` masih `onnxruntime`. Jalankan model-builder lalu restart Triton. |
 | `.env` diubah tapi tidak berefek | `docker restart` tidak membaca ulang `env_file`. Pakai `docker compose up -d --no-deps <service>`. |
 | `INFERENCE UNAVAILABLE` | Triton down. Container tidak crash, backoff 1s→30s. Cek `curl :8000/v2/health/ready`. |

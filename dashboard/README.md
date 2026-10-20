@@ -19,16 +19,15 @@ Arsitektur keseluruhan: [../README.md](../README.md). Pipeline deteksi:
 
 Sidebar: tiga item utama, lalu dua dropdown (**Detection** dan **Settings**)
 yang otomatis terbuka saat halaman di dalamnya sedang aktif. Viewer (`user`)
-hanya melihat Stream dan Detection → Dashboard.
+hanya melihat Stream dan Dashboard.
 
 | Grup | Item | Route | Isi |
 |---|---|---|---|
 | **Utama** | Stream | `/stream` | Grid live view lewat stream-gateway (HLS/MSE/WebRTC) |
-| | Devices | `/devices`, `/devices/[code]` | Kamera: nama, kode, RTSP URL, tab **Stream** (expose via gateway, forward kamera ini) |
-| | Automation | `/automation` | Editor Node-RED yang di-embed (§7) |
-| **Detection** ▾ | Dashboard | `/detection` | Status Triton, kartu GPU (util, **power W/limit (%)**, VRAM), ringkasan device |
-| | Devices | `/detection/devices`, `/detection/devices/[code]` | Konfigurasi deteksi: model, counting, APD/fire-smoke/face/intrusion, MQTT topic; tab **Lines** (gambar line/zone) dan **Logs**; kontrol container |
-| | Face Enrollment | `/faces` | Upload foto → augmentasi → embed via Triton → `known_faces` |
+| | Dashboard | `/detection` | Status Triton, kartu GPU (util, **power W/limit (%)**, VRAM), heartbeat tiap kamera |
+| | Devices | `/devices`, `/devices/[code]` | Satu halaman per kamera, kontrol container (start/stop/restart). Tab: **Basic Settings** (identitas, RTSP, model, counting, APD/fire-smoke/face/intrusion, MQTT topic), **Stream** (expose via gateway, forward kamera ini), **Line Configuration** (gambar line/zone), **Logs**, **History**. Alamat lama `/detection/devices/*` di-redirect ke sini |
+| | Automation | `/automation` | Daftar flow Node-RED, editor per flow, community nodes (§7) |
+| **Detection** ▾ | Face Enrollment | `/faces` | Upload foto → augmentasi → embed via Triton → `known_faces` |
 | | Build & Inference | `/inference` | Model repository, export ONNX, build engine, status Triton |
 | | Model Test | `/model-test` | Jalankan model pada video uji dan lihat hasilnya |
 | | Settings | `/detection/settings` | Hardware mode, Triton (image tag, default model, embed model), PostgreSQL, MQTT, detection defaults |
@@ -110,7 +109,7 @@ effective_env = default per kamera + Settings global + topic turunan + overrides
 | Role | Halaman | API |
 |---|---|---|
 | `admin` | Semua | Semua |
-| `user` (viewer) | Stream, Detection → Dashboard | Baca saja: daftar kamera, status, stream URL, hitungan. Env kamera diredaksi (tanpa RTSP/MQTT) |
+| `user` (viewer) | Stream, Dashboard | Baca saja: daftar kamera, status, stream URL, hitungan. Env kamera diredaksi (tanpa RTSP/MQTT) |
 
 - Akun awal `admin`/`admin`, `user`/`user`; kelola di **Settings → Users**.
 - Password di-hash scrypt; cookie sesi ditandatangani HMAC dan dicek ke tabel

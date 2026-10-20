@@ -119,7 +119,7 @@ Urutan singkat:
   `settings`); berlaku langsung ke kamera yang jalan. Riwayat dan rollback ada
   di tab History halaman kamera.
 - **Pindah / tambah PC:** Devices → Export di PC lama, Import di PC baru.
-- **Monitoring:** Detection → Dashboard (status, FPS, IN/OUT, error terakhir per
+- **Monitoring:** Dashboard (status, FPS, IN/OUT, error terakhir per
   kamera), `python3 tools/stream_health.py <container> --follow` (FPS, frame
   stale, error decode), `tools/resource_monitor.py` (CPU, GPU, antrian Triton).
 - **Lupa password admin:** `docker exec -it edge-dashboard node db/reset-password.js admin <password>`.

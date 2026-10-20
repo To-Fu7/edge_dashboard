@@ -27,7 +27,7 @@ docker run --rm edge-device:latest python -c \
 
 ### 2. Tambah dari dashboard
 
-**Detection → Devices → Add Camera**:
+**Devices → Add Camera**:
 
 | Field | Isi |
 |---|---|
@@ -46,7 +46,7 @@ Banyak kamera sekaligus, atau pindah dari PC lain: **Export** di PC lama →
 
 ### 3. Atur deteksi
 
-Buka kamera di **Detection → Devices → (kamera)**:
+Buka kamera di **Devices → (kamera)**:
 
 1. **Basic**:
    - Resolusi kerja (`SCREEN_RESOLUTION`), mis. `800×600`. **Tentukan ini
@@ -82,7 +82,7 @@ memakai `rtsp://<user>:<password>@<ip-server>:<listen-port>/<path RTSP asli>`.
 
 ## Verifikasi
 
-Di **Detection → Dashboard**, kartu kamera harus berstatus **Running** dengan
+Di **Dashboard**, kartu kamera harus berstatus **Running** dengan
 FPS dan hitungan IN/OUT. Lewat log:
 
 ```bash
