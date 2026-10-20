@@ -19,8 +19,10 @@ membuat Triton mati, dan dynamic batching menyala otomatis untuk model yang
 mendukungnya.
 
 Setelah dashboard terpasang (langkah 6), Triton juga bisa di-start/stop dari
-**Detection → Build & Inference**. Dashboard menulis ulang service `triton`
-sesuai **Hardware Mode**, jadi set mode yang benar dulu (lihat tabel error).
+**Detection → Build & Inference**. `docker-compose.yml` di folder ini statis;
+image dan runtime Triton dibaca dari `python-counting/.env`, yang ditulis
+dashboard sesuai **Hardware Mode** (Detection → Settings). Set mode yang benar
+dulu (lihat tabel error).
 
 ## Verifikasi
 
@@ -35,7 +37,7 @@ curl -s -X POST localhost:8000/v2/repository/index | python3 -m json.tool
 #    (siapkan 3 gambar dari kamera di python-counting/frames/).
 #    Tiap baris harus "same": jumlah deteksi sendiri-sendiri = dalam batch.
 docker run --rm --network envisions -v "$(pwd):/app" -w /app \
-  python-counting-services-python-1:latest \
+  edge-device:latest \
   python tools/batch_check.py --model yolo26s_640_e2e_u8 \
   frames/a.jpg frames/b.jpg frames/c.jpg
 
@@ -48,7 +50,7 @@ Cara cepat mengambil frame uji dari kamera:
 ```bash
 mkdir -p frames
 for f in a b c; do
-  docker run --rm -v "$(pwd)/frames:/out" python-counting-services-python-1:latest \
+  docker run --rm -v "$(pwd)/frames:/out" edge-device:latest \
     python -c "import cv2;c=cv2.VideoCapture('<rtsp-url>');ok,f=c.read();cv2.imwrite('/out/$f.jpg',f)"
 done
 ```
@@ -57,12 +59,12 @@ done
 
 | Gejala | Penyebab | Solusi |
 |---|---|---|
-| Health check `/v2/health/ready` = 400, log: `failed to load all models` padahal model utama `READY` | Ada model opsional yang tidak bisa di-load (mis. `arcface_112` tanpa `model.onnx`), dan Triton jalan dengan `strict_readiness` default (true). Kamera ikut menganggap Triton mati | Command Triton harus memuat `--strict-readiness=false` (default compose sekarang). Dari dashboard: Settings → Hardware Mode → simpan (membuat ulang service), lalu restart Triton. Atau hapus folder model yang tidak dipakai dari `models/` |
+| Health check `/v2/health/ready` = 400, log: `failed to load all models` padahal model utama `READY` | Ada model opsional yang tidak bisa di-load (mis. `arcface_112` tanpa `model.onnx`), dan Triton jalan dengan `strict_readiness` default (true). Kamera ikut menganggap Triton mati | Command Triton harus memuat `--strict-readiness=false` (sudah ada di `docker-compose.yml`). `git pull`, lalu `docker compose up -d triton` (atau Restart Triton dari dashboard). Atau hapus folder model yang tidak dipakai dari `models/` |
 | Health check bukan 200 / connection refused | Triton belum selesai load atau crash | `docker logs triton-inference-server`; load semua model bisa makan 1–2 menit |
 | Model `UNAVAILABLE`: *serialization ... version* / *engine plan file is not compatible* | Engine dibuild di GPU atau versi TensorRT lain | Build ulang: `docker compose --profile build run --rm -e FORCE_BUILD=1 triton-model-builder` |
 | `model does not support batching` (ArcFace) | `max_batch_size` > 0 untuk model dengan batch tetap | Set `max_batch_size: 0` di `models/arcface_112/config.pbtxt` |
 | `CUDA out of memory` saat load | Terlalu banyak model di `models/` | Pindahkan model yang tidak dipakai ke luar `models/`, restart Triton |
-| `no matching manifest for linux/amd64` untuk image `-py3-igpu` | Hardware Mode di dashboard masih **jetson** (default) di server x86 | Detection → Settings → Hardware Mode = **server**, simpan, start Triton lagi |
+| `no matching manifest for linux/amd64` untuk image `-py3-igpu` | Hardware Mode di dashboard masih **jetson** (default) di server x86 | Detection → Settings → Hardware Mode = **server**, simpan (menulis `python-counting/.env`), lalu start Triton lagi |
 | `unknown or invalid runtime name: nvidia` | NVIDIA Container Toolkit belum dikonfigurasi | [00-pre-setup.md](00-pre-setup.md) langkah 3 |
 | `batch_check.py` menampilkan `DIFFERENT` (mis. `in batch of 3: 0 dets`) | Model diexport dengan `nms=True` | Export ulang ([04-models.md](04-models.md)) |
 | `batch_check.py`: `failed to connect` | Container tidak di network `envisions` atau Triton mati | Pakai `--network envisions`; cek `docker network inspect envisions` memuat `triton-inference-server` |

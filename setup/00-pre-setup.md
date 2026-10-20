@@ -26,7 +26,6 @@ SSD/NVMe, dan repo sudah ada di disk.
 | 3001/tcp | Dashboard | Ya (operator) |
 | 8555/tcp, 8189/udp | Stream gateway (HLS/MSE, WebRTC) | Ya (browser) |
 | 5500–5600/tcp | Port-forward RTSP (nginx) | Hanya kalau dipakai |
-| 1880/tcp | Node-RED langsung (debug) | Tidak perlu; dashboard mem-proxy `/nodered` |
 | 8000–8002/tcp | Triton HTTP/gRPC/metrics | Tidak perlu dari luar |
 | 5435/tcp | PostgreSQL bawaan | Hanya kalau sistem lain membaca DB |
 | 1884/tcp, 9001/tcp | MQTT bawaan (MQTT, websocket) | Ya, untuk konsumen MQTT di luar server |

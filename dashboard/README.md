@@ -1,10 +1,11 @@
 # Dashboard (Next.js)
 
 Web UI untuk seluruh sistem: kamera sebagai sumber stream (area **utama**) dan
-pipeline deteksi python-counting + Triton (area **Detection**). Dashboard
-mengelola container lewat `/var/run/docker.sock`: menulis `.env_<CODE>`,
-menambah service ke `../python-counting/docker-compose.yml`, start/stop
-container, Triton, dan build model.
+pipeline deteksi python-counting + Triton (area **Detection**). Semua
+konfigurasi disimpan di PostgreSQL (database `edge`); dashboard membuat dan
+mengontrol container kamera `device-<code>` lewat Docker API
+(`/var/run/docker.sock`), menjalankan Triton dan build model, dan melindungi
+semuanya dengan login.
 
 Arsitektur keseluruhan: [../README.md](../README.md). Pipeline deteksi:
 [../python-counting/README.md](../python-counting/README.md).
@@ -17,7 +18,8 @@ Arsitektur keseluruhan: [../README.md](../README.md). Pipeline deteksi:
 ## 1. Navigasi
 
 Sidebar: tiga item utama, lalu dua dropdown (**Detection** dan **Settings**)
-yang otomatis terbuka saat halaman di dalamnya sedang aktif.
+yang otomatis terbuka saat halaman di dalamnya sedang aktif. Viewer (`user`)
+hanya melihat Stream dan Detection → Dashboard.
 
 | Grup | Item | Route | Isi |
 |---|---|---|---|
@@ -33,6 +35,7 @@ yang otomatis terbuka saat halaman di dalamnya sedang aktif.
 | **Settings** ▾ | General | `/settings` | Nama dashboard, Stream Gateway |
 | | Logs | `/settings/logs` | Log semua container kamera (`/logs` redirect ke sini) |
 | | Nginx | `/settings/nginx` | Kelola forward (pilih kamera → port), status `edge-portfwd-nginx`, config live vs generated, redeploy, log container (§4) |
+| | Users | `/settings/users` | Akun dashboard: tambah, role admin/viewer, ganti password, hapus |
 
 `/` redirect ke `/stream`. Halaman `devices` dan `settings` dipakai bersama
 oleh kedua area. Route `/detection/...` hanya me-re-export halaman yang sama,
@@ -50,16 +53,15 @@ Tambah kamera: [`../setup/07-add-camera.md`](../setup/07-add-camera.md).
 
 | Service | Port host | Peran |
 |---|---|---|
-| `dashboard` (`edge-dashboard`) | **3001** → 3000 | UI + API. Volume `dashboard-data` → `/app/data` (`settings.json`, foto wajah) |
+| `dashboard` (`edge-dashboard`) | **3001** → 3000 | UI + API. Volume `dashboard-data` → `/app/data` (foto wajah, secret login) |
 | `stream-gateway` | 8555/tcp, 8189/udp | RTSP → HLS/MSE/WebRTC (lihat §3) |
 | `edge-portfwd-nginx` | 5500–5600/tcp | L4 TCP proxy untuk port forward RTSP; config dibuat ulang dashboard |
-| `nodered` | 1880 | Editor Automation, di-embed lewat `/nodered` (§7) |
+| `nodered` | — | Editor Automation, di-embed lewat `/nodered`, khusus admin (§7) |
 | `timescaledb` (`env_services_timescaledb`) | 5435 → 5432 | PostgreSQL bawaan (opsional). Password dari `POSTGRES_PASSWORD` di `.env` |
 | `mqtt` (`env_services_mqtt`) | 1884 → 1883, 9001 | Mosquitto bawaan (opsional). Config di `mosquitto/config/mosquitto.conf` |
 
-Settings global PostgreSQL, MQTT, dan Debug Mode disalin ke `.env_<CODE>`
-**saat kamera dibuat**; mengubahnya belakangan tidak mengubah kamera yang
-sudah ada.
+Koneksi database ada di `.env` (`EDGE_DB_*` untuk dashboard, `EDGE_DEVICE_DB_*`
+untuk kamera). Selebihnya — kamera, settings, user — ada di database.
 
 ### Development tanpa Docker
 
@@ -73,6 +75,50 @@ npm run lint
 Untuk dev lokal, set `PYTHON_COUNTING_DIR`, `HOST_PYTHON_COUNTING_DIR`,
 `TRITON_HTTP_URL=http://localhost:8000`, dan `TRITON_METRICS_URL=http://localhost:8002`.
 Turbopack menolak `node_modules` berupa symlink ke luar project.
+
+---
+
+## 2b. Kamera, konfigurasi & login
+
+**Kamera** disimpan di tabel `devices`: UUID (kunci utama, dipakai hasil
+hitungan), kode dan nama (keduanya bisa diganti), `overrides` (nilai yang
+berbeda dari Settings), `effective_env` (hasil gabungan yang dibaca kamera), dan
+`config_version`.
+
+```
+effective_env = default per kamera + Settings global + topic turunan + overrides + identitas
+```
+
+- Saat form kamera disimpan, nilai yang sama dengan warisannya **tidak**
+  disimpan sebagai override, jadi tetap mengikuti Settings. Di form, field
+  warisan bertanda **global**, yang diubah bertanda **custom** + **reset**.
+- Setiap perubahan yang mengubah `effective_env` menaikkan `config_version`,
+  menyimpan snapshot ke `device_config_history` (tab **History**, bisa
+  di-restore), dan mengirim `NOTIFY edge_config '<id>:<versi>'`. Kamera yang
+  jalan menerapkannya sendiri (lihat python-counting/SYSTEM.md).
+- Mengubah Settings global menghitung ulang semua kamera; hanya kamera yang
+  benar-benar berubah yang diberi tahu.
+- Mengganti kode membuat ulang container dengan nama `device-<kode-baru>`.
+- **Export/Import** (halaman Devices): file JSON berisi kode, nama, dan
+  overrides tiap kamera.
+- Container kamera mendapat `EDGE_DEVICE_ID` + kredensial role `edge_device`
+  saja. Dashboard mencocokkan container dengan database saat start
+  (membuat yang hilang, menjalankan yang `enabled`, menghapus yang yatim).
+
+**Login** (tabel `users`, `sessions`):
+
+| Role | Halaman | API |
+|---|---|---|
+| `admin` | Semua | Semua |
+| `user` (viewer) | Stream, Detection → Dashboard | Baca saja: daftar kamera, status, stream URL, hitungan. Env kamera diredaksi (tanpa RTSP/MQTT) |
+
+- Akun awal `admin`/`admin`, `user`/`user`; kelola di **Settings → Users**.
+- Password di-hash scrypt; cookie sesi ditandatangani HMAC dan dicek ke tabel
+  `sessions` (logout, ganti password/role langsung berlaku). Berlaku 7 hari.
+- 5 kali salah password → dikunci 1 menit.
+- `proxy.ts` memeriksa setiap request; `/nodered` dicek di `server.js` (admin).
+- **Belum dilindungi login** (diterima untuk jaringan internal): URL
+  stream-gateway (:8555) dan port forward RTSP (5500–5600).
 
 ---
 
@@ -106,12 +152,11 @@ Forward bisa diedit, dinonaktifkan, atau dihapus dari tabel yang sama. Kalau
 RTSP kamera berubah, tabel menandai forward yang tujuannya sudah tidak cocok,
 dengan tombol **Update**.
 
-Daftar forward disimpan di `data/forwards.json` (volume `dashboard-data`).
-Setiap perubahan membuat ulang seluruh `nginx/portfwd-nginx.conf`, memvalidasi
-dengan `nginx -t`, lalu reload `edge-portfwd-nginx`. Forward lama yang dulu
-disimpan di `PORTFWD_*` per device diimpor otomatis sekali saat file ini belum
-ada. Tab Stream di halaman device hanya menampilkan forward kamera itu,
-dengan tombol ke Settings → Nginx.
+Daftar forward disimpan di tabel `port_forwards` (terhubung ke kamera; ikut
+terhapus kalau kameranya dihapus). Setiap perubahan membuat ulang seluruh
+`nginx/portfwd-nginx.conf`, memvalidasi dengan `nginx -t`, lalu reload
+`edge-portfwd-nginx`. Tab Stream di halaman device hanya menampilkan forward
+kamera itu, dengan tombol ke Settings → Nginx.
 
 Forward adalah passthrough TCP: setiap client membuka koneksi sendiri ke
 kamera/NVR. Untuk banyak penonton, pakai stream-gateway (§3).
@@ -177,4 +222,6 @@ dashboard diekspos ke jaringan yang tidak tepercaya. Contoh flow ada di
 | `edge-portfwd-nginx` gagal start "address already in use" | Port di 5500–5600 sudah dipakai container lain (§4) |
 | Enrollment error "No Face Embedding Model configured" | Isi Detection → Settings → Triton → Face Embedding Model |
 | `next build` EACCES di `.next` | `.next` milik root (pernah dibuild di container). `sudo chown -R $USER .next` atau hapus |
-| Skema DB | Dibuat oleh `python-counting/init_db.py`, bukan dari dashboard |
+| Semua halaman 503 *Login unavailable* | Database `edge` tidak terjangkau / login role gagal. `curl localhost:3001/api/health` menjelaskan penyebabnya; lihat setup/01-database.md |
+| Lupa password admin | `docker exec -it edge-dashboard node db/reset-password.js admin <password>` |
+| Skema DB | Dibuat dan di-upgrade oleh dashboard saat start (`db/migrations/*.sql`, tabel `schema_migrations`) |

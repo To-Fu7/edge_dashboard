@@ -1,3 +1,6 @@
+# Local development only: `python main.py` with plain environment variables
+# (no database). Cameras managed by the dashboard get their configuration from
+# PostgreSQL (database `edge`) via bootstrap.py instead.
 # DEVICE INFO
 DEVICE_ID = 'bd297e8d-9b86-4ba9-a6d2-147a623767e6' # UUID
 DEVICE_NAME = 'CCTV B2 SELATAN'

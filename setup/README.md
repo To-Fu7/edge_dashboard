@@ -37,10 +37,13 @@ Yang dilakukan installer:
   ditanyakan dulu (`--yes` = setuju semua).
 - **Database & MQTT**: pakai service bawaan, atau otomatis memakai container
   `env_services_timescaledb` / `env_services_mqtt` yang sudah ada (dan
-  menyambungkannya ke network `envisions`).
-- **Semua langkah setup**: image, dashboard, settings (hardware mode, DB, MQTT,
-  debug off) lewat API dashboard, export model, engine TensorRT, Triton, lalu
-  `batch_check` memakai `python-counting/1.mp4`.
+  menyambungkannya ke network `envisions`). Installer membuat database `edge`
+  dengan role `edge_owner` (dashboard) dan `edge_device` (kamera), password
+  acak disimpan di `dashboard/.env`.
+- **Semua langkah setup**: image, dashboard (membuat tabel + akun awal
+  `admin`/`admin` dan `user`/`user`), settings (hardware mode, Triton, MQTT)
+  lewat API dashboard sebagai admin, export model, engine TensorRT, Triton,
+  lalu `batch_check` memakai `python-counting/1.mp4`.
 - **Menangkap semua error**: setiap kegagalan menampilkan langkah yang gagal,
   perintahnya, 15 baris log terakhir, file dokumen yang relevan, dan path log
   lengkap (`setup/logs/`). Jalankan ulang `./setup/install.sh` dan installer
@@ -52,7 +55,8 @@ Yang dilakukan installer:
 | `--from <langkah>` / `--only <langkah>` | Ulang dari / hanya satu langkah: `prereq config infra images dashboard settings models engines triton verify` |
 | `--reset` | Lupakan progres dan jawaban sebelumnya |
 | `--model yolo26m --imgsz 1280` | Model lain (default `yolo26s`, 640) |
-| `--external-db`, `--external-mqtt` | Pakai DB / broker yang sudah ada |
+| `--external-db`, `--external-mqtt` | Pakai DB / broker yang sudah ada (DB: butuh kredensial superuser sekali) |
+| `EDGE_ADMIN_PASSWORD=...` | Kalau password admin dashboard sudah diganti |
 
 Yang tetap manual: memindahkan data ke NVMe (installer hanya memperingatkan),
 reboot setelah instal driver, dan menambah kamera (langkah 7).
@@ -82,13 +86,13 @@ Catatan platform lain: [windows-wsl2.md](windows-wsl2.md).
 ```
                          ┌────────────────────── server ───────────────────────┐
 Kamera/NVR ──RTSP──────► │ stream-gateway :8555 ──────────────► browser        │
-           ──RTSP──────► │ services-python-<code> (1 per kamera, CPU)          │
+           ──RTSP──────► │ device-<code> (1 per kamera, CPU)          │
                          │      │ gRPC                                         │
                          │      ▼                                              │
                          │ triton-inference-server (GPU) :8000-8002            │
                          │                                                     │
                          │ edge-dashboard :3001   edge-portfwd-nginx :5500-5600│
-                         │ nodered :1880          (langkah 6)                  │
+                         │ nodered (via /nodered) (langkah 6)                  │
                          │                                                     │
                          │ PostgreSQL :5435 (langkah 1)   MQTT :1884 (langkah 2)│
                          └─────────────────────────────────────────────────────┘

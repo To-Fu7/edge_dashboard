@@ -80,4 +80,4 @@ docker run --rm eclipse-mosquitto:2.0 mosquitto_pub -h <ip-broker> -p <port> -t 
 | `Error: Connection refused` | Broker tidak jalan atau port salah | `docker ps`, `docker logs env_services_mqtt` |
 | Timeout ke broker di mesin lain | Firewall / routing | `nc -vz <ip-broker> <port>`; buka port di firewall broker |
 | `Bind for 0.0.0.0:1884 failed` / `:9001 failed` | Port host dipakai service lain | Ganti port host di compose |
-| Container kamera log `MQTT client not initialized` | `MQTT_BROKER` kosong/salah di `.env_<CODE>` | Edit `python-counting/.env_<CODE>`, lalu Restart kamera dari dashboard. Isi juga Detection → Settings → MQTT untuk kamera berikutnya |
+| Container kamera log `MQTT client not initialized` | Broker MQTT di Detection → Settings kosong/salah | Perbaiki di Detection → Settings → MQTT. Semua kamera menerapkannya otomatis (restart singkat), kecuali kamera yang meng-override broker di halamannya sendiri |

@@ -36,8 +36,11 @@ punya GPU. Ia hanya:
             └────────────────────────────────────────────────────────┘
 ```
 
-Semua konfigurasi datang dari **environment variable** (file `.env_<CODE>`
-yang ditulis dashboard). Tidak ada file config lain.
+Konfigurasi kamera disimpan di **PostgreSQL** (database `edge`, tabel
+`devices`) dan diatur dari dashboard. Saat container start, `bootstrap.py`
+mengambil config itu dan memasukkannya ke environment, jadi kode pipeline tetap
+membaca `os.getenv` seperti biasa. Perubahan berikutnya datang lewat
+`NOTIFY` dan diterapkan oleh `config_watch.py` tanpa perlu restart manual.
 
 ---
 
@@ -66,6 +69,15 @@ Koordinat box selalu dikembalikan ke **frame penuh** (ditambah offset
 ---
 
 ## 3. Peta modul
+
+### 3.0 Start, konfigurasi & status (container yang dikelola dashboard)
+
+| File | Tugas | Yang perlu diketahui |
+|---|---|---|
+| `bootstrap.py` | **Entrypoint container.** Baca `effective_env` + `config_version` untuk `EDGE_DEVICE_ID`, isi `os.environ`, lalu jalankan `main.main()`. | Harus jalan **sebelum** `counting_config` di-import. Config terakhir disimpan di `.config-cache/<id>.json`; kalau DB mati saat start, cache dipakai. Tanpa `EDGE_DEVICE_ID` (dev lokal) ia langsung menjalankan `main` dengan env yang ada. |
+| `edge_db.py` | Koneksi ke database `edge` dengan role `edge_device`. | Role ini hanya bisa membaca kolom config miliknya dan menulis hasil + `device_status`. |
+| `config_watch.py` | Thread yang `LISTEN edge_config`. Saat versi config kamera ini naik: kalau semua key yang berubah ada di `HOT_KEYS`, nilainya langsung dipasang ke `cfg`; kalau tidak, `state.restart_requested` diisi. | Main loop melihat flag itu, flush antrian DB + MQTT, lalu `sys.exit(0)`; Docker (`restart: unless-stopped`) menyalakannya lagi dengan config baru. Ada poll tiap 60 detik untuk notifikasi yang terlewat. |
+| `outputs/heartbeat.py` | Tulis status ke `device_status` tiap 10 detik: `running` / `degraded` (Triton mati) / `error` (kamera gagal) / `starting` / `stopping`, FPS, orang per frame, IN/OUT hari ini, versi config, error terakhir. | Dashboard menampilkannya di Detection → Dashboard dan menandai kamera yang tidak melapor > 45 detik. |
 
 Dikelompokkan berdasarkan peran. Tiap modul punya satu tugas.
 
@@ -189,7 +201,7 @@ cache `known_faces` (`outputs/face_db.py`). Kalau mirip ≥
 
 ## 4. Data yang dihasilkan
 
-### Tabel PostgreSQL (dibuat `init_db.py`)
+### Tabel PostgreSQL (database `edge`, dibuat migrasi dashboard)
 
 | Tabel | Isi | Kapan ditulis |
 |---|---|---|
@@ -197,6 +209,8 @@ cache `known_faces` (`outputs/face_db.py`). Kalau mirip ≥
 | `inout_resample` | Satu row per device per jam: `interval_in`, `interval_out`. `hour_start` disimpan **UTC** | 24 row dibuat di awal hari; diisi tiap kirim interval MQTT dan saat ganti jam |
 | `apd_hourly`, `firesmoke_hourly`, `face_hourly`, `intrusion_hourly` | Satu row per device per jam, counter di kolom `data` (JSONB), mis. `{"fire": 2, "smoke": 5}` | Tiap event. 24 row dibuat di awal hari kalau fiturnya aktif |
 | `known_faces` | Database wajah (diisi dashboard, dibaca kamera) | Saat enrollment |
+| `devices` | Config kamera (dibaca kamera, ditulis dashboard) | Saat kamera / Settings disimpan |
+| `device_status` | Heartbeat kamera | Tiap 10 detik |
 
 ### Topic MQTT
 
@@ -221,10 +235,16 @@ restart.
 | Kamera putus / frame gagal dibaca | Loop dalam dilempar error → tunggu 5 detik → buka ulang kamera. State counting per-track dibersihkan; total harian tetap. |
 | Database lambat/mati | Tulis masuk antrian; worker mencoba sampai 3× (reconnect di antaranya), kalau tetap gagal query itu dibuang dengan log error. Loop frame tidak tertahan. |
 | MQTT gagal kirim interval | Counter interval dikembalikan, jadi angkanya ikut di pengiriman berikutnya. |
+| Database mati saat container start | `bootstrap.py` memakai config terakhir dari `.config-cache/`; kalau belum pernah ada, mencoba lagi (jeda naik sampai 30 detik). |
+| Koneksi `LISTEN` putus | `config_watch` menyambung ulang dan langsung mengecek versi terbaru; poll 60 detik sebagai cadangan. |
 
 ---
 
 ## 6. Aturan penting (jangan dilanggar)
+
+0. **Config hanya dari environment yang disiapkan `bootstrap.py`.** Jangan
+   membaca file config lain atau menulis ke tabel `devices` dari kamera; role
+   `edge_device` memang tidak diizinkan.
 
 1. **Container kamera tidak boleh butuh GPU/torch.** Semua model jalan di
    Triton. Jangan tambah `torch`/`ultralytics` ke `requirements.txt`.
@@ -250,12 +270,12 @@ restart.
 
 | Ingin... | File yang disentuh |
 |---|---|
-| Menambah env/konfigurasi | `counting_config.py`, lalu `env_example`, lalu form di dashboard (`dashboard/app/devices/[code]/page.tsx`, `lib/types.ts`) |
+| Menambah env/konfigurasi | `counting_config.py`; default-nya di `dashboard/lib/device-config.ts` (`DEVICE_DEFAULTS`, atau `globalEnv` kalau diwarisi dari Settings); field di form `dashboard/app/devices/[code]/page.tsx`. Kalau nilainya dibaca `cfg.X` saat dipakai dan aman diubah live, tambahkan ke `HOT_KEYS` di `config_watch.py` |
 | Mengubah aturan IN/OUT | `counting.py` (`process_track`) |
-| Menambah jenis deteksi baru | Buat `detection/<nama>.py` meniru `apd.py`, tambah tabel di `init_db.py` + `lifecycle.pregenerate_hourly_tables`, topic di `counting_config.py`, panggil dari loop `main.py`, tambah test di `tests/` |
+| Menambah jenis deteksi baru | Buat `detection/<nama>.py` meniru `apd.py`, tambah tabel di migrasi baru `dashboard/db/migrations/00N_*.sql` (plus GRANT untuk `edge_device`) + `lifecycle.pregenerate_hourly_tables`, topic di `counting_config.py`, panggil dari loop `main.py`, tambah test di `tests/` |
 | Mengganti/menambah model | `tools/export_model.py` → `tools/make_uint8_input.py` → `tools/build_engine.sh`; client otomatis membaca format barunya |
 | Mengubah isi pesan MQTT | `outputs/mqtt_out.py` |
-| Mengubah skema DB | `init_db.py` (harus idempotent: `IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`) |
+| Mengubah skema DB | File migrasi baru `dashboard/db/migrations/00N_<nama>.sql` (jangan ubah file yang sudah ada); dashboard menerapkannya saat start |
 | Mengubah tampilan preview MJPEG | `draw_static_overlays` / `draw_track` di `main.py` |
 | Debug FPS / tearing | `tools/stream_health.py`, `tools/resource_monitor.py`, log `Processing FPS` |
 

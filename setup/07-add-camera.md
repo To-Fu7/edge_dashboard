@@ -20,7 +20,7 @@ Main stream memberi resolusi lebih tinggi (lebih baik untuk orang kecil), sub
 stream lebih ringan. Uji dulu dari server:
 
 ```bash
-docker run --rm python-counting-services-python-1:latest python -c \
+docker run --rm edge-device:latest python -c \
   "import cv2;c=cv2.VideoCapture('<rtsp-url>');ok,f=c.read();print(ok, None if f is None else f.shape)"
 # True (1080, 1920, 3)  ← resolusi asli kamera
 ```
@@ -32,13 +32,17 @@ docker run --rm python-counting-services-python-1:latest python -c \
 | Field | Isi |
 |---|---|
 | Name | Nama yang mudah dikenali, mis. `CCTV B2 Selatan` |
-| Code | Unik, tanpa spasi, mis. `CCTV_EPW_B2S`. Dipakai sebagai nama file config dan container |
+| Code | Unik, tanpa spasi, mis. `CCTV_EPW_B2S`. Dipakai untuk nama container (`device-cctv-epw-b2s`) dan topic MQTT. Bisa diganti nanti |
 | RTSP URL | Dari langkah 1 |
-| Device ID | Kosongkan (dibuat otomatis). Isi hanya kalau memindahkan kamera lama dan ingin datanya tersambung |
+| Device ID | Kosongkan (UUID dibuat otomatis). Isi hanya kalau memindahkan kamera lama dan ingin hasil hitungannya tersambung |
 
-Dashboard lalu menulis `python-counting/.env_<CODE>`, menambah service
-`services-python-<code>` ke `python-counting/docker-compose.yml`, dan
-mendaftarkan kamera ke stream gateway.
+Dashboard menyimpan kamera di database `edge`, membuat container
+`device-<code>` lewat Docker (belum dijalankan), dan mendaftarkan kamera ke
+stream gateway. Kamera mewarisi semua nilai dari Settings (MQTT, model,
+confidence, FPS limit, dst.).
+
+Banyak kamera sekaligus, atau pindah dari PC lain: **Export** di PC lama →
+**Import** di PC baru (halaman Devices). Kode yang sudah ada dilewati.
 
 ### 3. Atur deteksi
 
@@ -54,7 +58,18 @@ Buka kamera di **Detection → Devices → (kamera)**:
 2. **Lines**: gambar garis atau zona di atas snapshot kamera. Untuk gerbang,
    pasangan garis A/B: orang harus melewati keduanya agar terhitung. Kalau
    arah IN/OUT terbalik, aktifkan `SWAP_IN_OUT`.
-3. **Save Settings**, lalu **Start** (kamera baru) atau **Restart** (kamera yang sudah jalan). Save saja hanya menulis config; Restart membuat ulang container supaya config baru terbaca.
+3. **Save Settings**, lalu **Start** untuk kamera baru.
+
+Perubahan berikutnya **langsung berlaku tanpa Restart**: setelah Save, kamera
+yang sedang jalan menerima konfigurasi baru dalam hitungan detik. Nilai
+ringan (tag, topic MQTT, JPEG quality, FPS limit, frame skip, cooldown,
+threshold wajah, nama) diterapkan di tempat; yang lain (RTSP, model, garis,
+resolusi, broker MQTT) membuat container restart sendiri ±5 detik. Hitungan
+hari ini tidak hilang.
+
+Setiap field yang diwarisi dari Settings bertanda **global**; kalau diubah di
+kamera ini jadi **custom** dengan tombol **reset**. Tab **History** menyimpan
+setiap versi konfigurasi, dan bisa dikembalikan ke versi sebelumnya.
 
 ### 4. (opsional) Live view & port forward
 
@@ -67,14 +82,18 @@ memakai `rtsp://<user>:<password>@<ip-server>:<listen-port>/<path RTSP asli>`.
 
 ## Verifikasi
 
+Di **Detection → Dashboard**, kartu kamera harus berstatus **Running** dengan
+FPS dan hitungan IN/OUT. Lewat log:
+
 ```bash
-cd /opt/ai/dashboard-python-counting/python-counting
-docker logs -f services-python-<code>
+docker logs -f device-<code>
 ```
 
 Urutan log yang benar:
 
 ```
+[bootstrap] loaded config v1 for CCTV_EPW_B2S from the database
+[config] watching for changes (v1)
 Successfully connected to PostgreSQL database
 Video source opened successfully: rtsp://...
 [Triton] Connected triton:8001 model=yolo26s_640_e2e_u8 ... e2e=True
@@ -85,7 +104,7 @@ Person 12 IN through gate 0 - Total IN: 1
 Atau di dashboard: **Settings → Logs**, pilih kamera. Pantau FPS per menit:
 
 ```bash
-python3 tools/stream_health.py services-python-<code> --follow
+python3 tools/stream_health.py device-<code> --follow
 ```
 
 ## Kalau error
@@ -94,14 +113,16 @@ python3 tools/stream_health.py services-python-<code> --follow
 |---|---|---|
 | `RTSP connection failed: rtsp://...` berulang tiap 5 detik | URL salah, kredensial salah, atau kamera tidak terjangkau | Uji ulang langkah 1. Cek user/password, IP, nomor channel, dan `nc -vz <ip-nvr> 554` |
 | `RTSP_URL is not set` | Field RTSP kosong | Isi RTSP di halaman device, simpan, start ulang |
-| `No valid line pairs found in environment` lalu container restart terus | Mode `line_crossing` tapi tidak ada `lineA` di `.env_<CODE>` (biasanya karena diedit manual) | Gambar garis di tab Lines, Save, Restart |
-| `DETECTION_MODE=zone but no zone polygons defined` | Mode `zone` tapi zona belum digambar | Gambar zona, simpan |
-| `Fatal: Error on Connecting DB at Start Up` lalu container berhenti | Nilai `PG_*` di `.env_<CODE>` salah, atau DB tidak terjangkau dari container | Lihat [01-database.md](01-database.md#kalau-error) (firewall!). Kalau nilainya salah: edit `PG_*` di `python-counting/.env_<CODE>` (halaman device tidak menampilkan field ini, dan mengubah Settings global tidak mengubah kamera yang sudah ada), lalu klik **Restart** |
+| `No valid line pairs found in environment` lalu container restart terus | Mode `line_crossing` tapi belum ada garis | Gambar garis di tab Lines, Save |
+| `DETECTION_MODE=zone but no zone polygons defined` | Mode `zone` tapi zona belum digambar | Gambar zona, Save |
+| `[bootstrap] database unavailable and no cached config yet ... retrying` | Container tidak bisa login ke database `edge` sebagai `edge_device` | Cek `EDGE_DB_HOST` / `EDGE_DEVICE_DB_PASSWORD` di `dashboard/.env` ([01 → Kalau error](01-database.md#kalau-error)). Setelah diperbaiki: `docker compose up -d dashboard`, lalu hapus container kamera (`docker rm -f device-<code>`) dan Start lagi agar kredensial baru terpasang |
+| `[bootstrap] database unavailable ...; using cached config` | DB sedang tidak terjangkau, kamera jalan dengan config terakhir | Normal untuk gangguan sesaat. Hasil hitungan tetap antre di container dan ditulis saat DB kembali |
+| `[bootstrap] device ... does not exist in the database` | Kamera sudah dihapus tapi container lama masih ada | `docker rm -f device-<code>` (dashboard juga membersihkannya saat restart) |
 | `Model 'yolo26s_640_e2e_u8' is not loaded on Triton` | Nama model salah atau model gagal load | `curl -s -X POST localhost:8000/v2/repository/index`; pilih model yang `READY` |
-| `INFERENCE UNAVAILABLE (Triton down)` | Triton mati | Container tidak crash, akan tersambung sendiri. Start Triton ([05](05-triton.md)) |
-| Container jalan tapi tidak ada data di DB / MQTT | `DEBUG_MODE=true` di `.env_<CODE>` | Set `DEBUG_MODE='false'` di `python-counting/.env_<CODE>`, lalu **Restart**. Matikan juga Debug Mode di Detection → Settings supaya kamera baru tidak ikut |
-| MQTT tidak terkirim padahal broker sehat | `MQTT_*` di `.env_<CODE>` kosong/salah (kamera dibuat sebelum Settings MQTT diisi) | Edit `MQTT_BROKER/PORT/USERNAME/PASSWORD` di `python-counting/.env_<CODE>`, lalu **Restart** |
-| Perubahan setting tidak berefek | Save hanya menulis `.env_<CODE>`; `docker restart` juga tidak membaca ulang `env_file` | Klik **Restart** di halaman device (membuat ulang container), atau `docker compose up -d --force-recreate --no-deps services-python-<code>` |
+| Kartu kamera **Degraded**, log `INFERENCE UNAVAILABLE (Triton down)` | Triton mati | Container tidak crash, akan tersambung sendiri. Start Triton ([05](05-triton.md)) |
+| Kartu kamera **No signal** | Container berhenti melapor lebih dari 45 detik (hang, crash loop) | `docker logs --tail 50 device-<code>`; Restart dari dashboard |
+| Kartu menampilkan *applying vN…* lama sekali | Kamera belum menerima konfigurasi baru (DB terputus, atau sedang restart karena perubahan berat) | Tunggu ±1 menit (ada pengecekan berkala); kalau tetap, Restart |
+| Tidak ada data di MQTT padahal broker sehat | Broker/kredensial di Settings → MQTT salah | Perbaiki di Settings → MQTT; semua kamera menerapkannya otomatis (restart singkat) |
 | FPS < 15 | GPU penuh, model 1280 di terlalu banyak kamera, atau `FRAME_SKIP` | Cek watt di kartu GPU (≥ 90% = penuh). Pakai 640 untuk kamera yang tidak perlu 1280 |
 | Gambar pecah (tearing), log `error while decoding MB` | Jaringan/kamera, atau backpressure | `stream_health.py`: kalau `dropped` kecil tapi error decode tinggi, masalahnya di jaringan/NVR (bitrate, kabel) |
 | Hitungan IN/OUT terbalik | Urutan garis A/B | Aktifkan `SWAP_IN_OUT` |

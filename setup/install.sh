@@ -21,9 +21,10 @@
 #
 # Steps: prereq config infra images dashboard settings models engines triton verify
 #
-# Non-interactive overrides (env): EDGE_PG_PASSWORD, EDGE_PG_HOST,
-# EDGE_PG_PORT, EDGE_PG_DB, EDGE_PG_USER, EDGE_MQTT_BROKER,
-# EDGE_MQTT_PORT, EDGE_MQTT_USER, EDGE_MQTT_PASSWORD.
+# Non-interactive overrides (env): EDGE_PG_PASSWORD (PostgreSQL superuser, used
+# once to create the `edge` database and its roles), EDGE_PG_HOST, EDGE_PG_PORT,
+# EDGE_PG_USER, EDGE_MQTT_BROKER, EDGE_MQTT_PORT, EDGE_MQTT_USER,
+# EDGE_MQTT_PASSWORD, EDGE_ADMIN_PASSWORD (dashboard admin, default "admin").
 
 set -Eeuo pipefail
 
@@ -539,15 +540,30 @@ step_config() {
     [ -n "$PG_HOST" ] && info "Using $PG_HOST:$PG_PORT (override with EDGE_PG_HOST / EDGE_PG_PORT)"
     PG_DB=${EDGE_PG_DB:-${PG_DB:-}}; PG_USER=${EDGE_PG_USER:-${PG_USER:-}}
     PG_PASS=${EDGE_PG_PASSWORD:-${PG_PASS:-}}
-    echo "  Existing PostgreSQL (reached from containers):"
+    echo "  Existing PostgreSQL (reached from containers). The superuser is used once,"
+    echo "  to create the database 'edge' and the roles edge_owner / edge_device:"
     ask PG_HOST "Host" "host.docker.internal"
     ask PG_PORT "Port" "5435"
-    ask PG_DB "Database" "postgres"
-    ask PG_USER "User" "postgres"
-    ask PG_PASS "Password" "" secret
-    [ -n "$PG_PASS" ] || die "No PostgreSQL password given" "Re-run interactively, or set EDGE_PG_PASSWORD."
-    ok "PostgreSQL: existing ($PG_HOST:$PG_PORT/$PG_DB)"
+    PG_DB=postgres
+    ask PG_USER "Superuser" "postgres"
+    ask PG_PASS "Superuser password" "" secret
+    [ -n "$PG_PASS" ] || die "No PostgreSQL superuser password given" "Re-run interactively, or set EDGE_PG_PASSWORD."
+    ok "PostgreSQL: existing ($PG_HOST:$PG_PORT)"
   fi
+
+  # Application roles for database `edge` — generated once, kept in dashboard/.env.
+  EDGE_OWNER_PASS=${EDGE_OWNER_PASS:-$(get_env_var "$DASH/.env" EDGE_DB_PASSWORD)}
+  EDGE_DEVICE_PASS=${EDGE_DEVICE_PASS:-$(get_env_var "$DASH/.env" EDGE_DEVICE_DB_PASSWORD)}
+  [ -n "$EDGE_OWNER_PASS" ] || EDGE_OWNER_PASS=$(random_secret)
+  [ -n "$EDGE_DEVICE_PASS" ] || EDGE_DEVICE_PASS=$(random_secret)
+  set_env_var "$DASH/.env" EDGE_DB_HOST "$PG_HOST"
+  set_env_var "$DASH/.env" EDGE_DB_PORT "$PG_PORT"
+  set_env_var "$DASH/.env" EDGE_DB_NAME edge
+  set_env_var "$DASH/.env" EDGE_DB_USER edge_owner
+  set_env_var "$DASH/.env" EDGE_DB_PASSWORD "$EDGE_OWNER_PASS"
+  set_env_var "$DASH/.env" EDGE_DEVICE_DB_USER edge_device
+  set_env_var "$DASH/.env" EDGE_DEVICE_DB_PASSWORD "$EDGE_DEVICE_PASS"
+  ok "dashboard/.env: database edge on $PG_HOST:$PG_PORT (roles edge_owner, edge_device)"
 
   # --- MQTT ---------------------------------------------------------------
   if [ -z "${USE_BUNDLED_MQTT:-}" ]; then
@@ -576,12 +592,12 @@ step_config() {
     ok "MQTT: existing ($MQTT_BROKER:$MQTT_PORT)"
   fi
 
-  for k in NET_CONNECT USE_BUNDLED_DB PG_HOST PG_PORT PG_DB PG_USER PG_PASS USE_BUNDLED_MQTT MQTT_BROKER MQTT_PORT MQTT_USER MQTT_PASS; do
+  for k in NET_CONNECT USE_BUNDLED_DB PG_HOST PG_PORT PG_DB PG_USER PG_PASS EDGE_OWNER_PASS EDGE_DEVICE_PASS USE_BUNDLED_MQTT MQTT_BROKER MQTT_PORT MQTT_USER MQTT_PASS; do
     save_answer "$k" "${!k}"
   done
 
   # --- Ports --------------------------------------------------------------
-  local ports=(3001 8555 1880 8000 8001 8002)
+  local ports=(3001 8555 8000 8001 8002)
   $USE_BUNDLED_DB && ports+=(5435)
   $USE_BUNDLED_MQTT && ports+=(1884 9001)
   local ours conflicts=()
@@ -630,14 +646,8 @@ step_infra() {
       || die "PostgreSQL did not become ready" "Check: docker logs env_services_timescaledb"
   fi
 
-  info "Creating tables (init_db.py)..."
-  dk run --rm --network envisions --add-host host.docker.internal:host-gateway \
-    -v "$PC:/app" -w /app \
-    -e PG_HOST="$PG_HOST" -e PG_PORT="$PG_PORT" -e PG_DB="$PG_DB" -e PG_USER="$PG_USER" -e PG_PASS="$PG_PASS" \
-    python:3.11-slim sh -c "pip install -q --disable-pip-version-check --root-user-action=ignore psycopg2-binary python-dotenv && python init_db.py" \
-    || die "Could not create the database tables" \
-      "Wrong password, DB not reachable from containers, or a firewall blocks the port (sudo ufw allow from 172.16.0.0/12 to any port $PG_PORT proto tcp)."
-  ok "Database schema is up to date"
+  create_edge_database
+  ok "Database edge ready (tables are created by the dashboard on start)"
 
   info "Testing MQTT..."
   local auth=()
@@ -648,10 +658,50 @@ step_infra() {
       "Bundled: docker logs env_services_mqtt. Existing broker: check address, credentials and firewall."
 }
 
+# Roles + database `edge`, idempotent. Passwords go in as psql variables and are
+# re-applied on every run so dashboard/.env and the server never drift apart.
+EDGE_DB_SQL=$(cat <<'SQL'
+SELECT format('CREATE ROLE edge_owner LOGIN PASSWORD %L', :'owner_pw') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'edge_owner') \gexec
+SELECT format('CREATE ROLE edge_device LOGIN PASSWORD %L', :'device_pw') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'edge_device') \gexec
+SELECT format('ALTER ROLE edge_owner LOGIN PASSWORD %L', :'owner_pw') \gexec
+SELECT format('ALTER ROLE edge_device LOGIN PASSWORD %L', :'device_pw') \gexec
+SELECT 'CREATE DATABASE edge OWNER edge_owner' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'edge') \gexec
+REVOKE CONNECT ON DATABASE edge FROM PUBLIC;
+GRANT CONNECT ON DATABASE edge TO edge_owner, edge_device;
+\c edge
+ALTER SCHEMA public OWNER TO edge_owner;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+SQL
+)
+
+run_psql_super() {  # stdin = SQL
+  if $USE_BUNDLED_DB; then
+    dk exec -i env_services_timescaledb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"
+  else
+    dk run --rm -i --network envisions --add-host host.docker.internal:host-gateway -e PGPASSWORD="$PG_PASS" \
+      postgres:16-alpine psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 -q "$@"
+  fi
+}
+
+create_edge_database() {
+  info "Creating database 'edge' and roles edge_owner / edge_device..."
+  printf '%s\n' "$EDGE_DB_SQL" | run_psql_super -v owner_pw="$EDGE_OWNER_PASS" -v device_pw="$EDGE_DEVICE_PASS" \
+    || die "Could not create the database 'edge' and its roles" \
+      "Check the superuser password and that the server is reachable from containers (setup/01-database.md)."
+  if $USE_BUNDLED_DB; then
+    # Our own server: application roles shouldn't reach the default database either.
+    echo 'REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;' | run_psql_super || true
+  fi
+  # The camera role must be able to log in to `edge` (and nothing else).
+  dk run --rm --network envisions --add-host host.docker.internal:host-gateway -e PGPASSWORD="$EDGE_DEVICE_PASS" \
+    postgres:16-alpine psql -h "$PG_HOST" -p "$PG_PORT" -U edge_device -d edge -tAc 'SELECT 1' >/dev/null \
+    || die "Role edge_device cannot log in to database edge" "See the error above; pg_hba.conf may reject password logins from Docker networks."
+}
+
 step_images() {
-  info "Building the camera image (python-counting-services-python-1)..."
-  dk build -t python-counting-services-python-1:latest "$PC"
-  dk run --rm python-counting-services-python-1:latest \
+  info "Building the camera image (edge-device:latest)..."
+  dk build -t edge-device:latest "$PC"
+  dk run --rm edge-device:latest \
     python -c "import cv2, tritonclient.grpc, psycopg2, paho.mqtt, lap" \
     || die "Camera image built but its Python dependencies don't import" \
       "On Jetson/arm64 a wheel may be missing for this architecture — see the import error above."
@@ -668,16 +718,26 @@ step_dashboard() {
   info "Building and starting ${svcs[*]} (first build takes a few minutes)..."
   compose_dash up -d --build "${svcs[@]}"
   check_container_arch edge-dashboard stream-gateway edge-portfwd-nginx nodered
-  wait_for 240 "Dashboard is answering on :3001" curl -fsS http://localhost:3001/api/settings \
+  wait_for 300 "Dashboard is up and the database schema is migrated" curl -fsS http://localhost:3001/api/health \
     || { compose_dash logs --tail 40 dashboard || true
          die "Dashboard did not come up" "See the dashboard log above (docker compose logs dashboard in dashboard/)."; }
 }
 
 step_settings() {
+  info "Signing in to the dashboard as admin..."
+  local jar="$SETUP/.install-cookies"
+  ( umask 077; : > "$jar" )
+  EDGE_ADMIN_PASSWORD=${EDGE_ADMIN_PASSWORD:-admin}
+  local login
+  login=$(ADMIN_PW="$EDGE_ADMIN_PASSWORD" python3 -c 'import json,os; print(json.dumps({"username":"admin","password":os.environ["ADMIN_PW"]}))')
+  if ! curl -fsS -c "$jar" -H 'Content-Type: application/json' --data "$login" http://localhost:3001/api/auth/login >/dev/null; then
+    rm -f "$jar"
+    die "Could not sign in to the dashboard as admin" "If the admin password was changed, run again with EDGE_ADMIN_PASSWORD=<password>."
+  fi
+
   info "Applying settings through the dashboard API..."
   local body resp
   body=$(HW="$HARDWARE_MODE" TAG="$TRITON_TAG" MODEL="$MODEL_NAME" \
-         PGH="$PG_HOST" PGP="$PG_PORT" PGD="$PG_DB" PGU="$PG_USER" PGW="$PG_PASS" \
          MQB="$MQTT_BROKER" MQP="$MQTT_PORT" MQU="${MQTT_USER:-}" MQW="${MQTT_PASS:-}" python3 - <<'PY'
 import json, os
 e = os.environ
@@ -685,19 +745,18 @@ print(json.dumps({
     "applyHardwareMode": True,
     "hardwareMode": e["HW"],
     "triton": {"imageTag": e["TAG"], "defaultModel": e["MODEL"]},
-    "pg": {"host": e["PGH"], "port": e["PGP"], "db": e["PGD"], "user": e["PGU"], "pass": e["PGW"]},
     "mqtt": {"broker": e["MQB"], "port": e["MQP"], "username": e["MQU"], "password": e["MQW"]},
-    "defaults": {"debug_mode": "false"},
 }))
 PY
 )
-  resp=$(curl -fsS -X PUT -H 'Content-Type: application/json' --data "$body" http://localhost:3001/api/settings) \
-    || die "Dashboard rejected the settings" "Check: docker compose logs dashboard (in dashboard/)."
+  resp=$(curl -fsS -b "$jar" -X PUT -H 'Content-Type: application/json' --data "$body" http://localhost:3001/api/settings) \
+    || { rm -f "$jar"; die "Dashboard rejected the settings" "Check: docker compose logs dashboard (in dashboard/)."; }
+  rm -f "$jar"
   grep -q '"success":true' <<<"$resp" || die "Unexpected settings response: $resp" "Check the dashboard log."
-  grep -q "$TRITON_IMAGE" "$PC/docker-compose.yml" || die "Triton service was not regenerated for mode '$HARDWARE_MODE'" \
-    "Check that the dashboard can write python-counting/docker-compose.yml (bind mount ../python-counting)."
+  grep -qx "TRITON_IMAGE=$TRITON_IMAGE" "$PC/.env" 2>/dev/null || die "python-counting/.env was not written for mode '$HARDWARE_MODE'" \
+    "Check that the dashboard can write python-counting/ (bind mount ../python-counting) — docker compose logs dashboard."
   ok "Hardware mode $HARDWARE_MODE, Triton $TRITON_IMAGE, default model $MODEL_NAME"
-  ok "PostgreSQL $PG_HOST:$PG_PORT, MQTT $MQTT_BROKER:$MQTT_PORT, debug mode off"
+  ok "MQTT $MQTT_BROKER:$MQTT_PORT (applies to every camera)"
 }
 
 step_models() {
@@ -766,7 +825,7 @@ print(" ".join("%s(%s)" % (m["name"], m.get("reason") or m.get("state")) for m i
 
 step_verify() {
   info "Batch check with frames from python-counting/1.mp4..."
-  dk run --rm -v "$PC:/app" -w /app python-counting-services-python-1:latest python -c "
+  dk run --rm -v "$PC:/app" -w /app edge-device:latest python -c "
 import cv2, os
 os.makedirs('.install-frames', exist_ok=True)
 c = cv2.VideoCapture('1.mp4')
@@ -777,7 +836,7 @@ for i, pos in enumerate((30, 90, 150)):
     cv2.imwrite(f'.install-frames/{i}.jpg', f)
 "
   local out
-  out=$(dk run --rm --network envisions -v "$PC:/app" -w /app python-counting-services-python-1:latest \
+  out=$(dk run --rm --network envisions -v "$PC:/app" -w /app edge-device:latest \
         python tools/batch_check.py --model "$MODEL_NAME" .install-frames/0.jpg .install-frames/1.jpg .install-frames/2.jpg)
   echo "$out" | sed 's/^/    /'
   dk run --rm -v "$PC:/app" alpine rm -rf /app/.install-frames
@@ -849,7 +908,7 @@ CURRENT_STEP=""
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo
 echo "${C_GRN}${C_B}✔ Edge is installed.${C_0}"
-echo "  Dashboard:  http://${IP:-localhost}:3001"
+echo "  Dashboard:  http://${IP:-localhost}:3001   (sign in: admin / admin, viewer: user / user)"
 echo "  Next:       Detection → Devices → Add Camera (setup/07-add-camera.md)"
 if ((${#WARNINGS[@]})); then
   echo "  ${C_YLW}Warnings:${C_0}"

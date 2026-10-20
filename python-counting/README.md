@@ -60,9 +60,12 @@ JPEG tidak menahan loop).
 | `models/` | Triton model repository (ONNX di git, `.plan` dibuild on-device) |
 | `tools/` | Export/build model + monitoring/recording (lihat §6) |
 | `tests/` | Test plain-script (lihat §7) |
-| `init_db.py` | Membuat semua tabel (idempotent) |
-| `env_example` | Contoh `.env_<CODE>` |
-| `docker-compose.yml` | `triton` + `triton-model-builder`; service kamera ditambahkan dashboard |
+| `bootstrap.py` | Entrypoint container: ambil config kamera dari DB, lalu jalankan `main.py` |
+| `config_watch.py` | LISTEN `edge_config`: terapkan perubahan config tanpa/dengan restart |
+| `edge_db.py` | Koneksi database `edge` (role `edge_device`) |
+| `outputs/heartbeat.py` | Status kamera ke tabel `device_status` tiap 10 detik |
+| `env_example` | Contoh env untuk menjalankan lokal tanpa database |
+| `docker-compose.yml` | `triton` + `triton-model-builder` (statis; nilai per mesin di `.env`). Container kamera dibuat dashboard |
 
 ---
 
@@ -72,7 +75,7 @@ Semua langkah setup dipindah ke folder [`../setup/`](../setup/):
 
 | Bagian | File |
 |---|---|
-| Database (`init_db.py`, tabel) | [01-database.md](../setup/01-database.md) |
+| Database `edge` + role (tabel dibuat dashboard) | [01-database.md](../setup/01-database.md) |
 | Image kamera + image export | [03-images.md](../setup/03-images.md) |
 | Model: export → uint8 → TensorRT, model APD/fire/face/ArcFace, batching | [04-models.md](../setup/04-models.md) |
 | Triton + `batch_check.py` | [05-triton.md](../setup/05-triton.md) |
@@ -170,20 +173,22 @@ Payload event: `device_id/code/name`, `timestamp`, `event`, `type`, `tag`
 
 ---
 
-## 5. Env per kamera (`.env_<CODE>`)
+## 5. Variabel kamera
 
-Ditulis ulang dashboard setiap device disimpan. Contoh lengkap: [`env_example`](env_example).
+Disimpan di database (`devices.effective_env`) dan diatur dari dashboard;
+`bootstrap.py` memasukkannya ke environment sebelum pipeline jalan. Container
+sendiri hanya membawa `EDGE_DEVICE_ID`, `EDGE_DB_*` (role `edge_device`), dan
+`TRITON_URL`. `PG_*` untuk menulis hasil diturunkan dari `EDGE_DB_*`.
 
 | Kelompok | Variabel |
 |---|---|
-| Identitas | `DEVICE_ID`, `DEVICE_NAME`, `DEVICE_CODE` |
-| DB | `PG_HOST/PORT/DB/USER/PASS` |
+| Identitas | `DEVICE_ID` (UUID), `DEVICE_NAME`, `DEVICE_CODE` |
 | MQTT | `MQTT_BROKER/PORT/USERNAME/PASSWORD` + topic §4 |
 | Stream | `RTSP_URL`, `SCREEN_RESOLUTION` (`[W, H]` atau `auto` = resolusi asli), `CROP_AREA`, `ANNOTATED_STREAM`, `STREAM_PORT`, `STREAM_JPEG_QUALITY`, `JPEG_QUALITY` |
 | Inference | `TRITON_MODEL` (mis. `yolo26s_640_e2e_u8`), `YOLO_CONFIDENCE` (0.3), `YOLO_IOU` (hanya model raw). `TRITON_URL` di-inject compose (`triton:8001`) |
 | Counting | `DETECTION_MODE`, `lineA..` / `zoneA..`, `POINT_AXIS`, `SWAP_IN_OUT`, `MERGE_GATES` |
 | Tambahan | `APD_*`, `FIRE_SMOKE_*`, `FACE_*`, `INTRUSION_*`, `apdZone*`, `faceZone*`, `intrusionZone*/Line*/Time*` |
-| Dev | `DEBUG_MODE` (DB/MQTT jadi no-op), `FALLBACK_VIDEO` (baca file video, bukan RTSP) |
+| Dev lokal saja | `DEBUG_MODE` (DB/MQTT jadi no-op), `FALLBACK_VIDEO` (baca file video, bukan RTSP). Diabaikan di container yang dikelola dashboard; tool debug mp4 terpisah ada di daftar next idea |
 | Deprecated (diabaikan) | `YOLO_MODEL` (dipetakan ke `TRITON_MODEL`), `YOLO_IMGSZ`, `ENABLE_NVDEC`, `YOLO_DEVICE` |
 
 `SCREEN_RESOLUTION` menentukan koordinat line/zone. Kalau diganti, gambar
@@ -239,12 +244,13 @@ for t in tests/test_*.py; do python "$t" || echo "FAIL $t"; done
 | `test_face_detection` | Dedup, best-shot, cosine match |
 | `test_intrusion` | Zona/garis + rentang jam |
 | `test_zone_restriction` | Resolusi zona APD/Face |
+| `test_config_watch` | Perubahan config mana yang langsung diterapkan dan mana yang butuh restart |
 | `test_image_utils` | Crop util |
 | `test_parity` | Letterbox/NMS/ByteTrack vs ultralytics (**butuh torch**, dev only) |
 | `test_e2e_smoke`, `test_firesmoke_e2e_smoke` | Loop `main.py` penuh di `1.mp4` dengan YOLO lokal via torch, tanpa Triton (**butuh torch**, dev only) |
 
-Di image produksi semua lulus kecuali dua smoke test e2e (image tidak berisi
-torch).
+Di image produksi semua lulus kecuali tiga test yang butuh torch/ultralytics
+(`test_parity` dan dua smoke test e2e).
 
 ---
 

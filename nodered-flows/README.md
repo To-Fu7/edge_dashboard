@@ -64,13 +64,13 @@ Node-RED instance already runs the production `inout_resample` sync flow.
 - **No surrogate `id` column.** Unlike `inout_resample` (`id SERIAL PRIMARY
   KEY`), `apd_hourly`/`firesmoke_hourly`/`face_hourly`/`intrusion_hourly` only
   have `UNIQUE (device_id, hour_start)` as their natural key (see
-  `python-counting/init_db.py`).
+  the dashboard's schema migration, `dashboard/db/migrations/001_edge_schema.sql`).
   The "mark as synced" step here matches on `(device_id, hour_start)` tuples
   instead of a single id list.
-- **`is_synced` column**: added via `python-counting/init_db.py` (migration:
+- **`is_synced` column**: part of the schema in `dashboard/db/migrations/001_edge_schema.sql` (
   `ALTER TABLE ... ADD COLUMN IF NOT EXISTS is_synced BOOLEAN NOT NULL
   DEFAULT false`, plus a partial index on `WHERE is_synced = false` so this
-  query stays fast regardless of table size) — run `python init_db.py`
+  query stays fast regardless of table size) — applied automatically when the dashboard starts
   against the local DB before these flows will find the column.
   `outputs/hourly_aggregate_db.py`'s `increment_hourly()` resets
   `is_synced = false` on every update as a defensive measure against a rare
@@ -107,6 +107,6 @@ Node-RED instance already runs the production `inout_resample` sync flow.
    6 minutes.
 5. Watch the debug panel for the first cycle on each pipeline to confirm rows
    are actually found/synced (or "No X rows to sync" if there's nothing
-   pending yet — expected right after running `init_db.py`'s migration,
+   pending yet — expected right after the schema was created,
    since older rows retroactively default to `is_synced = false` and will
    all get picked up on the first run).
