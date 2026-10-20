@@ -600,16 +600,17 @@ step_config() {
   local ports=(3001 8555 8000 8001 8002)
   $USE_BUNDLED_DB && ports+=(5435)
   $USE_BUNDLED_MQTT && ports+=(1884 9001)
-  local ours conflicts=()
-  ours=$(dk ps --format '{{.Names}} {{.Ports}}' | grep -E '^(edge-dashboard|stream-gateway|edge-portfwd-nginx|nodered|triton-inference-server|env_services_timescaledb|env_services_mqtt) ' || true)
+  local conflicts=() owner
+  local ours_re='^(edge-dashboard|stream-gateway|edge-portfwd-nginx|nodered|triton-inference-server|env_services_timescaledb|env_services_mqtt)$'
   command -v ss >/dev/null || { warn "'ss' not found — skipping the port check."; ports=(); }
   for p in "${ports[@]}"; do
-    if ss -Htln "sport = :$p" 2>/dev/null | grep -q .; then
-      grep -q ":$p->" <<<"$ours" || conflicts+=("$p")
-    fi
+    ss -Htln "sport = :$p" 2>/dev/null | grep -q . || continue
+    # `publish=` also matches ports inside a collapsed range (e.g. 8000-8002->8000-8002).
+    owner=$(dk ps --filter "publish=$p" --format '{{.Names}}' | head -1)
+    [[ -n "$owner" && "$owner" =~ $ours_re ]] || conflicts+=("$p${owner:+ ($owner)}")
   done
   ((${#conflicts[@]} == 0)) || die "Port(s) already in use by something else: ${conflicts[*]}" \
-    "Stop that service (sudo ss -ltnp | grep -E ':(${conflicts[*]// /|})'), or change the host port in the compose file."
+    "Stop that service (sudo ss -ltnp shows who listens), or change the host port in the compose file."
   ((${#ports[@]})) && ok "Ports free: ${ports[*]}"
 }
 
