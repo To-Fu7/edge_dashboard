@@ -106,6 +106,9 @@ footer_on_failure() {
 # Anything not handled by die() lands here: an unexpected command failure.
 on_error() {
   local code=$? line=$1 cmd=$2
+  # The trap is inherited by subshells (e.g. compose_dash's `( cd … )`); only
+  # report once, from the main shell, or the failure is printed twice.
+  if [ "$BASHPID" != "$$" ]; then exit "$code"; fi
   trap - ERR
   echo
   echo "${C_RED}${C_B}✖ Unexpected failure (exit $code) at install.sh:$line${C_0}"
@@ -389,6 +392,7 @@ step_prereq() {
           "Check /etc/docker/daemon.json; if Docker itself is failing on JetPack 6 with iptables/kernel-module errors, install Docker 27.x instead of 28+."
       fi
       ok "NVIDIA container runtime present (JetPack $JETPACK)"
+      check_iptables_raw
       ;;
     cpu)
       info "CPU mode: skipping GPU checks."
@@ -415,6 +419,36 @@ step_prereq() {
   mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
   [ "$mem_gb" -lt 15 ] && warn "Only ${mem_gb} GB RAM — 16 GB or more is recommended."
   ok "Memory: ${mem_gb} GB"
+}
+
+# Docker 28+ adds "direct access filtering" rules to the iptables raw table.
+# Stock JetPack 6 kernels don't ship that table, so every container on a custom
+# network fails with "can't initialize iptables table `raw'".
+check_iptables_raw() {
+  local major
+  major=$(dk version --format '{{.Server.Version}}' | cut -d. -f1)
+  [ "${major:-0}" -ge 28 ] || return 0
+  if sudo iptables -t raw -L -n >/dev/null 2>&1; then ok "iptables raw table available"; return; fi
+  if sudo modprobe iptable_raw 2>/dev/null && sudo iptables -t raw -L -n >/dev/null 2>&1; then
+    echo iptable_raw | sudo tee /etc/modules-load.d/iptable_raw.conf >/dev/null
+    ok "Loaded the iptable_raw kernel module (persisted in /etc/modules-load.d)"
+    return
+  fi
+  if grep -qs DOCKER_INSECURE_NO_IPTABLES_RAW /etc/systemd/system/docker.service.d/*.conf; then
+    ok "Docker configured to run without the iptables raw table"; return
+  fi
+  info "Docker $(dk version --format '{{.Server.Version}}') needs the iptables 'raw' table, which this kernel doesn't have."
+  confirm "Configure Docker to skip the raw-table rules (DOCKER_INSECURE_NO_IPTABLES_RAW=1, same behaviour as Docker 27)?" \
+    || die "This kernel has no iptables raw table, which Docker ${major}+ requires" \
+      "Either set DOCKER_INSECURE_NO_IPTABLES_RAW=1 for docker.service, or install Docker 27.x (see setup/00-pre-setup.md)."
+  sudo mkdir -p /etc/systemd/system/docker.service.d
+  printf '[Service]\nEnvironment="DOCKER_INSECURE_NO_IPTABLES_RAW=1"\n' \
+    | sudo tee /etc/systemd/system/docker.service.d/10-no-iptables-raw.conf >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl restart docker
+  sleep 3
+  resolve_docker || die "Docker did not come back after the restart" "sudo journalctl -u docker -n 50"
+  ok "Docker configured to run without the iptables raw table"
 }
 
 gpu_container_test() {
@@ -531,6 +565,9 @@ step_config() {
 }
 
 step_infra() {
+  # Re-checked here (not only in prereq) so a resumed run on a box whose Docker
+  # was upgraded in between still catches it before creating networks.
+  $IS_WSL || check_iptables_raw
   # Create the shared network the compose way (labelled), so both compose
   # projects can use it, then attach any existing DB/MQTT container chosen in config.
   if ! dk network inspect envisions >/dev/null 2>&1; then
