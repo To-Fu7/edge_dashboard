@@ -122,7 +122,7 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
 
 export function Sidebar() {
   const pathname = usePathname() ?? '';
-  const [appName, setAppName] = useState('EPiWalk');
+  const [appName, setAppName] = useState('Edge');
 
   useEffect(() => {
     fetch('/api/settings')

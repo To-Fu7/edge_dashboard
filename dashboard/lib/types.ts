@@ -192,7 +192,7 @@ export interface GlobalSettings {
 }
 
 export const DEFAULT_SETTINGS: GlobalSettings = {
-  appName: 'EPiWalk',
+  appName: 'Edge',
   hardwareMode: 'jetson',
   triton: {
     imageTag: '24.08',

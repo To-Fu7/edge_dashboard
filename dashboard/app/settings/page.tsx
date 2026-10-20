@@ -87,7 +87,7 @@ export default function SettingsPage() {
           <Input
             value={settings.appName}
             onChange={e => setSettings(prev => ({ ...prev, appName: e.target.value }))}
-            placeholder="EPiWalk"
+            placeholder="Edge"
           />
         </FormField>
       </Section>

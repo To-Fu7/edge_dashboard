@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# EPiWalk installer — runs setup steps 0–8 (see setup/README.md) on:
+# Edge installer — runs setup steps 0–8 (see setup/README.md) on:
 #   * Linux x86_64 with an NVIDIA GPU   → hardware mode "server"
 #   * Linux x86_64 without a GPU        → hardware mode "cpu" (onnxruntime)
 #   * NVIDIA Jetson (JetPack 5 / 6)     → hardware mode "jetson"
@@ -21,9 +21,9 @@
 #
 # Steps: prereq config infra images dashboard settings models engines triton verify
 #
-# Non-interactive overrides (env): EPIWALK_PG_PASSWORD, EPIWALK_PG_HOST,
-# EPIWALK_PG_PORT, EPIWALK_PG_DB, EPIWALK_PG_USER, EPIWALK_MQTT_BROKER,
-# EPIWALK_MQTT_PORT, EPIWALK_MQTT_USER, EPIWALK_MQTT_PASSWORD.
+# Non-interactive overrides (env): EDGE_PG_PASSWORD, EDGE_PG_HOST,
+# EDGE_PG_PORT, EDGE_PG_DB, EDGE_PG_USER, EDGE_MQTT_BROKER,
+# EDGE_MQTT_PORT, EDGE_MQTT_USER, EDGE_MQTT_PASSWORD.
 
 set -Eeuo pipefail
 
@@ -200,7 +200,7 @@ existing_container_target() {  # existing_container_target NAME INTERNAL_PORT �
   if dk inspect -f '{{json .NetworkSettings.Networks}}' "$name" | grep -q '"envisions"'; then
     EXIST_HOST=$name; EXIST_PORT=$port; return
   fi
-  if confirm "Connect existing container '$name' to the 'envisions' network so EPiWalk can reach it by name?"; then
+  if confirm "Connect existing container '$name' to the 'envisions' network so Edge can reach it by name?"; then
     NET_CONNECT="${NET_CONNECT:+$NET_CONNECT }$name"
     EXIST_HOST=$name; EXIST_PORT=$port; return
   fi
@@ -262,7 +262,7 @@ detect_platform() {
 }
 
 print_platform() {
-  echo "${C_B}EPiWalk installer${C_0}  ${C_DIM}(log: $LOG)${C_0}"
+  echo "${C_B}Edge installer${C_0}  ${C_DIM}(log: $LOG)${C_0}"
   echo "  Platform:      $PLATFORM${JETPACK:+ (JetPack $JETPACK)}"
   echo "  Hardware mode: $HARDWARE_MODE"
   echo "  Triton image:  $TRITON_IMAGE"
@@ -408,7 +408,7 @@ step_config() {
   fi
   if $USE_BUNDLED_DB; then
     local existing; existing=$(get_env_var "$DASH/.env" POSTGRES_PASSWORD)
-    PG_PASS=${EPIWALK_PG_PASSWORD:-${PG_PASS:-}}
+    PG_PASS=${EDGE_PG_PASSWORD:-${PG_PASS:-}}
     if [ -z "$PG_PASS" ] && [ -n "$existing" ] && [ "$existing" != change-me ]; then PG_PASS=$existing; fi
     ask PG_PASS "Password for the bundled PostgreSQL (enter = generate)" "$(random_secret)" secret
     if dk volume inspect dashboard_timescaledb_volume >/dev/null 2>&1 && [ "$PG_PASS" != "$existing" ]; then
@@ -418,17 +418,17 @@ step_config() {
     PG_HOST=env_services_timescaledb; PG_PORT=5432; PG_DB=postgres; PG_USER=postgres
     ok "PostgreSQL: bundled (env_services_timescaledb, host port 5435)"
   else
-    PG_HOST=${EPIWALK_PG_HOST:-${PG_HOST:-}}; PG_PORT=${EPIWALK_PG_PORT:-${PG_PORT:-}}
-    [ -n "$PG_HOST" ] && info "Using $PG_HOST:$PG_PORT (override with EPIWALK_PG_HOST / EPIWALK_PG_PORT)"
-    PG_DB=${EPIWALK_PG_DB:-${PG_DB:-}}; PG_USER=${EPIWALK_PG_USER:-${PG_USER:-}}
-    PG_PASS=${EPIWALK_PG_PASSWORD:-${PG_PASS:-}}
+    PG_HOST=${EDGE_PG_HOST:-${PG_HOST:-}}; PG_PORT=${EDGE_PG_PORT:-${PG_PORT:-}}
+    [ -n "$PG_HOST" ] && info "Using $PG_HOST:$PG_PORT (override with EDGE_PG_HOST / EDGE_PG_PORT)"
+    PG_DB=${EDGE_PG_DB:-${PG_DB:-}}; PG_USER=${EDGE_PG_USER:-${PG_USER:-}}
+    PG_PASS=${EDGE_PG_PASSWORD:-${PG_PASS:-}}
     echo "  Existing PostgreSQL (reached from containers):"
     ask PG_HOST "Host" "host.docker.internal"
     ask PG_PORT "Port" "5435"
     ask PG_DB "Database" "postgres"
     ask PG_USER "User" "postgres"
     ask PG_PASS "Password" "" secret
-    [ -n "$PG_PASS" ] || die "No PostgreSQL password given" "Re-run interactively, or set EPIWALK_PG_PASSWORD."
+    [ -n "$PG_PASS" ] || die "No PostgreSQL password given" "Re-run interactively, or set EDGE_PG_PASSWORD."
     ok "PostgreSQL: existing ($PG_HOST:$PG_PORT/$PG_DB)"
   fi
 
@@ -447,12 +447,12 @@ step_config() {
     MQTT_BROKER=env_services_mqtt; MQTT_PORT=1883; MQTT_USER=""; MQTT_PASS=""
     ok "MQTT: bundled (env_services_mqtt, host port 1884)"
   else
-    MQTT_BROKER=${EPIWALK_MQTT_BROKER:-${MQTT_BROKER:-}}; MQTT_PORT=${EPIWALK_MQTT_PORT:-${MQTT_PORT:-}}
-    [ -n "$MQTT_BROKER" ] && info "Using $MQTT_BROKER:$MQTT_PORT (override with EPIWALK_MQTT_BROKER / EPIWALK_MQTT_PORT)"
-    MQTT_USER=${EPIWALK_MQTT_USER:-${MQTT_USER:-}}; MQTT_PASS=${EPIWALK_MQTT_PASSWORD:-${MQTT_PASS:-}}
+    MQTT_BROKER=${EDGE_MQTT_BROKER:-${MQTT_BROKER:-}}; MQTT_PORT=${EDGE_MQTT_PORT:-${MQTT_PORT:-}}
+    [ -n "$MQTT_BROKER" ] && info "Using $MQTT_BROKER:$MQTT_PORT (override with EDGE_MQTT_BROKER / EDGE_MQTT_PORT)"
+    MQTT_USER=${EDGE_MQTT_USER:-${MQTT_USER:-}}; MQTT_PASS=${EDGE_MQTT_PASSWORD:-${MQTT_PASS:-}}
     echo "  Existing MQTT broker (reached from containers):"
     ask MQTT_BROKER "Broker host/IP" ""
-    [ -n "$MQTT_BROKER" ] || die "No MQTT broker given" "Re-run interactively, set EPIWALK_MQTT_BROKER, or drop --external-mqtt."
+    [ -n "$MQTT_BROKER" ] || die "No MQTT broker given" "Re-run interactively, set EDGE_MQTT_BROKER, or drop --external-mqtt."
     ask MQTT_PORT "Port" "1883"
     ask MQTT_USER "Username (enter = none)" ""
     [ -n "$MQTT_USER" ] && ask MQTT_PASS "Password" "" secret
@@ -520,7 +520,7 @@ step_infra() {
   local auth=()
   [ -n "${MQTT_USER:-}" ] && auth=(-u "$MQTT_USER" -P "$MQTT_PASS")
   wait_for 60 "MQTT broker accepts publishes" dk run --rm --network envisions --add-host host.docker.internal:host-gateway \
-    eclipse-mosquitto:2.0 mosquitto_pub -h "$MQTT_BROKER" -p "$MQTT_PORT" "${auth[@]}" -t epiwalk/install -m ok \
+    eclipse-mosquitto:2.0 mosquitto_pub -h "$MQTT_BROKER" -p "$MQTT_PORT" "${auth[@]}" -t edge/install -m ok \
     || die "Cannot publish to MQTT at $MQTT_BROKER:$MQTT_PORT" \
       "Bundled: docker logs env_services_mqtt. Existing broker: check address, credentials and firewall."
 }
@@ -720,7 +720,7 @@ CURRENT_STEP=""
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo
-echo "${C_GRN}${C_B}✔ EPiWalk is installed.${C_0}"
+echo "${C_GRN}${C_B}✔ Edge is installed.${C_0}"
 echo "  Dashboard:  http://${IP:-localhost}:3001"
 echo "  Next:       Detection → Devices → Add Camera (setup/07-add-camera.md)"
 if ((${#WARNINGS[@]})); then

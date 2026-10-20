@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  EPiWalk installer for Windows. Checks WSL2, Docker Desktop and the NVIDIA
+  Edge installer for Windows. Checks WSL2, Docker Desktop and the NVIDIA
   driver, then runs setup/install.sh inside WSL2 (all real work happens there).
 
 .EXAMPLE
@@ -35,7 +35,7 @@ function Invoke-Wsl([string[]]$WslArgs) {
 }
 
 try {
-  Write-Host "EPiWalk installer (Windows -> WSL2)" -ForegroundColor White
+  Write-Host "Edge installer (Windows -> WSL2)" -ForegroundColor White
 
   # --- Windows -------------------------------------------------------------
   $build = [Environment]::OSVersion.Version.Build
