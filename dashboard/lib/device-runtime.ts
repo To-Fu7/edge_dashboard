@@ -15,6 +15,11 @@ export const DEVICE_IMAGE = process.env.EDGE_DEVICE_IMAGE || 'edge-device:latest
 const NETWORK = 'envisions';
 const LABEL_ROLE = 'edge.role';
 const LABEL_ID = 'edge.device.id';
+// Bump when the container definition below changes: containers with an older
+// spec are recreated on the next start/reconcile so they pick up the change.
+//   2 — /dev/shm shared with Triton (system shared memory for frames)
+const LABEL_SPEC = 'edge.device.spec';
+const CONTAINER_SPEC = '2';
 
 type Device = Pick<DeviceRow, 'id' | 'code' | 'name' | 'enabled'>;
 
@@ -38,13 +43,15 @@ export async function deviceImageExists(): Promise<boolean> {
   }
 }
 
-/** Create the container if it doesn't exist (or exists under an old name). */
+/** Create the container if it doesn't exist, or recreate it when it exists
+ *  under an old name (renamed device) or from an older container spec. */
 export async function ensureContainer(device: Device): Promise<string> {
   const name = containerNameFor(device.code);
   const existing = (await containersByDevice()).get(device.id);
   if (existing) {
-    if (existing.Names.some(n => n.replace(/^\//, '') === name)) return name;
-    await getDocker().getContainer(existing.Id).remove({ force: true });   // renamed device
+    const sameName = existing.Names.some(n => n.replace(/^\//, '') === name);
+    if (sameName && existing.Labels[LABEL_SPEC] === CONTAINER_SPEC) return name;
+    await getDocker().getContainer(existing.Id).remove({ force: true });
   }
   if (!(await deviceImageExists())) {
     throw new Error(`Camera image ${DEVICE_IMAGE} is not built. Build it from Detection → Dashboard or run setup/install.sh --only images.`);
@@ -61,9 +68,11 @@ export async function ensureContainer(device: Device): Promise<string> {
     Cmd: ['python', 'bootstrap.py'],
     WorkingDir: '/app',
     Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
-    Labels: { [LABEL_ROLE]: 'device', [LABEL_ID]: device.id },
+    Labels: { [LABEL_ROLE]: 'device', [LABEL_ID]: device.id, [LABEL_SPEC]: CONTAINER_SPEC },
     HostConfig: {
-      Binds: [`${HOST_PYTHON_COUNTING_DIR}:/app`],
+      // /dev/shm is the host's, as in the Triton container: frames go to Triton
+      // through system shared memory instead of inside the gRPC request.
+      Binds: [`${HOST_PYTHON_COUNTING_DIR}:/app`, '/dev/shm:/dev/shm'],
       RestartPolicy: { Name: 'unless-stopped' },
       NetworkMode: NETWORK,
       ExtraHosts: ['host.docker.internal:host-gateway'],

@@ -21,13 +21,16 @@ services:
     # make the whole server report not-ready to every camera.
     command: tritonserver --model-repository=/models --strict-model-config=false --exit-on-error=false --strict-readiness=false
     runtime: ${TRITON_RUNTIME:-nvidia}
-    shm_size: 1gb
     ports:
       - "8000:8000"   # HTTP
       - "8001:8001"   # gRPC
       - "8002:8002"   # Prometheus metrics
     volumes:
       - ${HOST_PYTHON_COUNTING_DIR:-.}/models:/models
+      # The host's /dev/shm, shared with every camera container: cameras hand
+      # frames to Triton through system shared memory (inference/triton_client.py)
+      # instead of serializing them into each gRPC request.
+      - /dev/shm:/dev/shm
     networks:
       - envisions
     environment:
