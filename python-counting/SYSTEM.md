@@ -106,7 +106,7 @@ yang dibuang terlihat di log `Processing FPS: X (dropped N stale frames ...)`.
 
 | File | Tugas |
 |---|---|
-| `inference/triton_client.py` | `TritonYoloClient`: koneksi gRPC ke satu model YOLO. Saat connect, ia **membaca metadata model dari Triton** (nama input, ukuran, tipe uint8/float, format output). Jadi client menyesuaikan diri dengan model, tanpa hardcode. |
+| `inference/triton_client.py` | `TritonYoloClient`: koneksi gRPC ke satu model YOLO. Saat connect, ia **membaca metadata model dari Triton** (nama input, ukuran, tipe uint8/float, format output). Jadi client menyesuaikan diri dengan model, tanpa hardcode. Frame dikirim lewat **system shared memory** (lihat bawah). |
 | `inference/triton_embed_client.py` | `TritonEmbedClient`: sama, untuk ArcFace (wajah → vektor 512 angka). |
 | `inference/preprocessing.py` | `letterbox()` + `preprocess()`: ubah frame jadi tensor sesuai input model. |
 | `inference/postprocessing.py` | Ubah output model jadi box. Dua format didukung otomatis: **end-to-end** (`[N,300,6]`, YOLO26, sudah tanpa duplikat) dan **raw** (YOLOv8/11, perlu NMS di numpy). `unletterbox()` mengembalikan koordinat ke frame asli. |
@@ -117,7 +117,20 @@ menangkapnya dan masuk **degraded mode** (lihat §5).
 
 Satu frame bisa dikirim ke beberapa model (person, APD, fire, face). Kalau
 ukuran input dan tipenya sama, tensor hasil preprocess dipakai ulang lewat
-`pre_cache` sehingga letterbox cukup dihitung sekali.
+`pre_cache` sehingga letterbox cukup dihitung sekali. Karena itu semua model
+sebaiknya bertipe input uint8 (`make_uint8_input.py`): satu preprocess untuk
+semua model, dan data per frame 4× lebih kecil daripada float.
+
+**Shared memory.** Container kamera dan Triton sama-sama me-mount `/dev/shm`
+milik host. Saat connect, client membuat region sendiri
+(`/dev/shm/edge_<device id>_<model>_in` dan `_out`) lalu mendaftarkannya ke
+Triton. Tiap frame, tensor ditulis ke region itu dan request gRPC hanya
+menyebut namanya, jadi frame tidak perlu di-serialize ke protobuf di kedua
+sisi. Di Jetson ini memangkas CPU kamera dari ~49% ke ~28% satu core dan Triton
+dari ~20% ke ~15%. Kalau Triton tidak bisa membuka region (mis. `/dev/shm`
+tidak di-share) atau `TRITON_SHM=off`, client otomatis kembali mengirim tensor
+di dalam request; log connect menulis `transport=shared memory` atau
+`transport=grpc payload`. Bandingkan keduanya dengan `tools/shm_check.py`.
 
 ### 3.4 Tracking
 

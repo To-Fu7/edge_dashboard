@@ -91,12 +91,17 @@ misalnya `-e QUEUE_DELAY_US=3000` untuk kamera sedikit di GPU yang sibuk.
 ### 6. Model deteksi tambahan (opsional)
 
 Hanya kalau APD, api/asap, atau wajah akan dipakai. Langkahnya sama dengan
-langkah 2 lalu 4, tanpa langkah 3:
+langkah 2, 3, lalu 4. Langkah 3 (uint8) dianjurkan juga untuk model ini: kalau
+semua model bertipe uint8, frame cukup di-preprocess sekali untuk semua model,
+dan data per frame 4× lebih kecil. Contoh APD lengkap:
 
 ```bash
-# APD
+# APD: export ke model-sources/, konversi uint8 ke models/
 curl -sL -o apd_best.pt "https://raw.githubusercontent.com/VoxDroid/Construction-Site-Safety-PPE-Detection/main/Model-Training/Outputs/runs/detect/yolov8s_ppe_css_200_epochs/weights/best.pt"
-docker run --rm -v "$(pwd):/work" yolo-export --weights /work/apd_best.pt --imgsz 640 --name apd_640 --out-dir /work/models
+docker run --rm -v "$(pwd)/..:/work" yolo-export --weights /work/python-counting/apd_best.pt --imgsz 640 --name apd_640 --out-dir /work/model-sources
+docker run --rm -v "$(pwd)/..:/work" --entrypoint python yolo-export \
+  /work/python-counting/tools/make_uint8_input.py \
+  --src /work/model-sources/apd_640 --dst /work/python-counting/models/apd_640_u8
 
 # Api / asap
 curl -sL -o firesmoke_best.pt "https://raw.githubusercontent.com/luminous0219/fire-and-smoke-detection-yolov8/main/weights/best.pt"
@@ -114,6 +119,11 @@ mkdir -p models/arcface_112/1 && mv w600k_r50.onnx models/arcface_112/1/model.on
 
 docker compose --profile build run --rm triton-model-builder
 ```
+
+Contoh lain di bawah memakai pola lama (export langsung ke `models/`, input
+float). Itu tetap jalan, tapi lebih boros CPU; ubah dengan pola APD di atas.
+Di kamera, pilih model `apd_640_u8` dan isi kelas pelanggaran
+(`NO-Hardhat,NO-Mask,NO-Safety Vest` untuk model ini).
 
 Perhatikan lisensi: model api/asap AGPL-3.0, deteksi wajah GPL-3.0, ArcFace
 untuk riset/non-komersial.
