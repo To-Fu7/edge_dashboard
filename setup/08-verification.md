@@ -57,3 +57,5 @@ SELECT device_id, total_in, total_out, created_at FROM person_inout ORDER BY cre
 | 9 | [02-mqtt.md](02-mqtt.md#kalau-error) |
 | 11 | Kurangi kamera yang memakai model 1280, atau tambah GPU |
 | 12 | [00-pre-setup.md](00-pre-setup.md) langkah 4 (`RequiresMountsFor`, fstab) |
+
+aowkowkokwokw
